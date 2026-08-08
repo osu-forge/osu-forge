@@ -10,6 +10,9 @@ use std::collections::HashMap;
 /// Radius of a hit object at scale 1, in osu! pixels.
 pub const OBJECT_RADIUS: f64 = 64.0;
 
+/// Height of the playfield in osu! pixels. The axis Hard Rock reflects about.
+pub const PLAYFIELD_HEIGHT: f64 = 384.0;
+
 /// How far one stack level shifts an object, before the object scale is
 /// applied. Up and to the left, hence the negation at the use site.
 pub const STACK_OFFSET_PER_LEVEL: f64 = 6.4;

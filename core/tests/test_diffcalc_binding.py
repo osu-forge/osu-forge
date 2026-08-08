@@ -140,6 +140,32 @@ class TestMods:
         assert hard_rock.overall_difficulty == 10.0
         assert hard_rock.hit_window_300 == pytest.approx(20.0)
 
+    def test_hard_rock_reflects_the_playfield(self) -> None:
+        # The half of Hard Rock that changes what the hand has to do. The
+        # simulator judges against these positions, so if the reflection stops
+        # crossing the boundary the hit errors on every HR replay become a
+        # measurement of a map nobody played — while the distances between
+        # consecutive objects still look entirely reasonable.
+        plain = beatmap()
+        played = plain.with_mods(diffcalc.MODS["HARD_ROCK"])
+        assert [o.raw_y for o in played.objects] == [384 - o.raw_y for o in plain.objects]
+        assert [o.raw_x for o in played.objects] == [o.raw_x for o in plain.objects]
+
+    def test_the_stack_offset_is_not_reflected_with_the_map(self) -> None:
+        # Stacked objects shift up and to the left. The reflection moves the
+        # object; it does not turn the stack downward, because stacking runs
+        # after the mod rather than being part of the map it reflects.
+        played = beatmap().with_mods(diffcalc.MODS["HARD_ROCK"])
+        stacked = [o for o in played.objects if o.stack_height]
+        assert stacked, "the fixture's two coincident circles should stack"
+        for obj in stacked:
+            assert obj.x < obj.raw_x and obj.y < obj.raw_y
+
+    def test_easy_shares_the_difficulty_changes_but_not_the_reflection(self) -> None:
+        plain = beatmap()
+        played = plain.with_mods(diffcalc.MODS["EASY"])
+        assert [o.raw_y for o in played.objects] == [o.raw_y for o in plain.objects]
+
     def test_double_time_leaves_the_beatmap_alone(self) -> None:
         # It changes the clock, not the map. Applying it here as well would count
         # the same speed increase twice.

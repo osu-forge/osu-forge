@@ -201,10 +201,12 @@ impl Beatmap {
 
     /// The same beatmap as the player experienced it under `mods`.
     ///
-    /// Only Hard Rock and Easy change anything; both move the approach rate,
-    /// which moves the stacking window, so the result is restacked. Double Time
-    /// and Half Time are not applied here at all — they change the clock, not
-    /// the beatmap, and a caller reporting in real time divides by the rate.
+    /// Only Hard Rock and Easy change anything. Both move the approach rate,
+    /// which moves the stacking window, so the result is restacked; Hard Rock
+    /// also reflects every object about the horizontal midline, so positions
+    /// under it are **not** the positions in the file. Double Time and Half
+    /// Time are not applied here at all — they change the clock, not the
+    /// beatmap, and a caller reporting in real time divides by the rate.
     fn with_mods(&self, py: Python<'_>, mods: u32) -> PyResult<Self> {
         let mut inner = self.inner.clone();
         inner.apply_mods(Mods(mods));
