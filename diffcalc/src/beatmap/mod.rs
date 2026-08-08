@@ -13,11 +13,11 @@ mod parse;
 mod stacking;
 
 pub use curve::SliderPath;
-pub use nested::{NestedKind, NestedObject};
 pub use model::{
     Beatmap, CurveKind, Difficulty, HitObject, HitObjectKind, Metadata, Mode, Pos, Slider,
     Stacking, TimingPoint, OBJECT_RADIUS, STABLE_RADIUS_FUDGE, STACK_OFFSET_PER_LEVEL,
 };
+pub use nested::{NestedKind, NestedObject};
 pub use parse::{parse, ParseError};
 pub use stacking::STACK_DISTANCE;
 

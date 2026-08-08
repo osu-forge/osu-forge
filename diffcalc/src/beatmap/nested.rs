@@ -100,7 +100,8 @@ impl Beatmap {
         let min_distance_from_end = velocity * TICK_MIN_MS_FROM_END;
 
         // Stacking moves the whole slider, path included, not just its head.
-        let stack = f64::from(object.stack_height) * self.difficulty.scale() * -STACK_OFFSET_PER_LEVEL;
+        let stack =
+            f64::from(object.stack_height) * self.difficulty.scale() * -STACK_OFFSET_PER_LEVEL;
         let at = |progress: f64| {
             let p = path.position_at(progress);
             Pos::new(p.x + stack, p.y + stack)
@@ -244,7 +245,10 @@ mod tests {
         let repeats: Vec<_> = p.iter().filter(|n| n.kind == NestedKind::Repeat).collect();
         assert_eq!(repeats.len(), 1);
         assert!((repeats[0].time - 2500.0).abs() < 1e-6);
-        assert!((repeats[0].pos.x - 300.0).abs() < 0.5, "turns at the far end");
+        assert!(
+            (repeats[0].pos.x - 300.0).abs() < 0.5,
+            "turns at the far end"
+        );
 
         let ticks: Vec<_> = p.iter().filter(|n| n.kind == NestedKind::Tick).collect();
         assert_eq!(ticks.len(), 4, "two per span");
