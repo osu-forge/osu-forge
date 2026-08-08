@@ -25,7 +25,6 @@ from osuforge import __version__, hardware
 from osuforge.collect.epoch import ConfigEpoch
 from osuforge.collect.journal import Journal, default_journal_path, scan
 from osuforge.config import ConfigNotFoundError, OsuConfig, find_config
-from osuforge.hardware import default_profile_path
 from osuforge.live.render import REFRESH_SECONDS, render
 from osuforge.live.watch import POLL_SECONDS, BeatmapIndex, Session, analyse, default_page_path
 from osuforge.models import Basis, Finding, Severity
@@ -33,6 +32,8 @@ from osuforge.probes.base import ProbeResult
 from osuforge.probes.collect import collect_probes
 from osuforge.rules import ALL_RULES, CONFIG_ONLY_RULES, RuleContext, run_rules
 from osuforge.rules.engine import Rule
+from osuforge.store import StoreError, default_db_path, open_store
+from osuforge.store import profile as store_profile
 
 __all__ = ["main"]
 
@@ -342,8 +343,6 @@ def _scan(args: argparse.Namespace) -> int:
 
 def _profile(args: argparse.Namespace) -> int:
     """Show or set the hardware facts that no file records."""
-    path = args.path
-
     if args.dpi is not None and (args.dpi_x is not None or args.dpi_y is not None):
         print("error: --dpi sets both axes; use --dpi-x and --dpi-y instead", file=sys.stderr)
         return 2
@@ -353,12 +352,6 @@ def _profile(args: argparse.Namespace) -> int:
         # whole reason the axes are separate is that assuming they match is the
         # mistake.
         print("error: --dpi-x and --dpi-y must be given together", file=sys.stderr)
-        return 2
-
-    try:
-        current = hardware.load(path)
-    except hardware.ProfileError as exc:
-        print(f"error: {exc}", file=sys.stderr)
         return 2
 
     tracking_given = (
@@ -373,30 +366,38 @@ def _profile(args: argparse.Namespace) -> int:
         print("error: --asymmetric-cutoff already sets both distances", file=sys.stderr)
         return 2
 
-    if args.dpi is not None or args.dpi_x is not None or tracking_given:
-        try:
-            pointer = current.pointer
-            if args.dpi is not None or args.dpi_x is not None:
-                dpi_x = args.dpi if args.dpi is not None else args.dpi_x
-                dpi_y = args.dpi if args.dpi is not None else args.dpi_y
-                pointer = hardware.Mouse(dpi_x=dpi_x, dpi_y=dpi_y)
+    try:
+        with open_store(args.path) as store:
+            # Brings across a profile.json written before the store existed, so
+            # a value already entered is not silently lost. Does nothing once
+            # the store holds a pointer of its own.
+            store_profile.import_legacy_profile(store)
+            current = store_profile.load(store)
 
-            tracking = current.tracking
-            if args.asymmetric_cutoff is not None:
-                tracking = hardware.Tracking.asymmetric(args.asymmetric_cutoff)
-            elif tracking_given:
-                tracking = hardware.Tracking(
-                    landing_mm=args.landing_mm,
-                    lift_off_mm=args.lift_off_mm,
-                    label=args.cutoff_label or "",
-                )
+            if args.dpi is not None or args.dpi_x is not None or tracking_given:
+                pointer = current.pointer
+                if args.dpi is not None or args.dpi_x is not None:
+                    dpi_x = args.dpi if args.dpi is not None else args.dpi_x
+                    dpi_y = args.dpi if args.dpi is not None else args.dpi_y
+                    pointer = hardware.Mouse(dpi_x=dpi_x, dpi_y=dpi_y)
 
-            current = hardware.Profile(pointer=pointer, tracking=tracking)
-            written = hardware.save(current, path)
-        except hardware.ProfileError as exc:
-            print(f"error: {exc}", file=sys.stderr)
-            return 2
-        print(f"saved: {written}", file=sys.stderr)
+                tracking = current.tracking
+                if args.asymmetric_cutoff is not None:
+                    tracking = hardware.Tracking.asymmetric(args.asymmetric_cutoff)
+                elif tracking_given:
+                    tracking = hardware.Tracking(
+                        landing_mm=args.landing_mm,
+                        lift_off_mm=args.lift_off_mm,
+                        label=args.cutoff_label or "",
+                    )
+
+                current = hardware.Profile(pointer=pointer, tracking=tracking)
+                store_profile.save(store, current, vendor=args.vendor or "", model=args.model or "")
+                print(f"saved: {store.path}", file=sys.stderr)
+            db_path = store.path
+    except (hardware.ProfileError, StoreError) as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
 
     mouse = current.mouse
     tracked = current.tracking
@@ -406,7 +407,7 @@ def _profile(args: argparse.Namespace) -> int:
             json.dumps(
                 {
                     "schema_version": 1,
-                    "path": str(path or default_profile_path()),
+                    "path": str(db_path),
                     "mouse": (
                         None
                         if mouse is None
@@ -642,11 +643,13 @@ def _build_parser() -> argparse.ArgumentParser:
             "as invented numbers"
         ),
     )
+    profile.add_argument("--vendor", metavar="NAME", help="mouse maker, free text")
+    profile.add_argument("--model", metavar="NAME", help="mouse model, free text")
     profile.add_argument(
         "--path",
         type=Path,
         default=None,
-        help=f"where the profile lives (default: {default_profile_path()})",
+        help=f"where the store lives (default: {default_db_path()})",
     )
     profile.add_argument("--json", action="store_true", help="machine-readable output on stdout")
     profile.set_defaults(func=_profile)

@@ -141,7 +141,7 @@ class TestProfile:
     def run(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str], *args: str
     ) -> tuple[int, str, str]:
-        return _run(["profile", "--path", str(tmp_path / "profile.json"), *args], capsys)
+        return _run(["profile", "--path", str(tmp_path / "osu-forge.db"), *args], capsys)
 
     def test_an_empty_profile_leads_with_the_one_number_most_mice_have(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
@@ -200,7 +200,10 @@ class TestProfile:
         code, _, err = self.run(tmp_path, capsys, "--dpi", "3")
         assert code == 2
         assert "typo rather than a mouse" in err
-        assert not (tmp_path / "profile.json").exists()
+        # The store file itself is created on open; what must not survive is the
+        # value. Checked by reading it back rather than by looking at the file.
+        _, out, _ = self.run(tmp_path, capsys, "--json")
+        assert json.loads(out)["mouse"] is None
 
     def test_a_cutoff_preset_expands_to_its_distances(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
