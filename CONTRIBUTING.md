@@ -72,6 +72,21 @@ not declare it as a dependency, because it is not on PyPI — it is built from t
 checkout by the two commands above. Rebuild it after changing anything under
 `diffcalc/`; a stale `.pyd` will happily keep answering with the old geometry.
 
+### The differential oracle (optional, for replay work)
+
+The hit simulator is checked object by object against circleguard, which is
+AGPL-3.0 and therefore never installed alongside anything we ship:
+
+```bash
+py -3.14 -m venv tools/oracle-venv
+tools/oracle-venv/Scripts/pip install circleguard
+```
+
+That environment is gitignored, driven by subprocess, and reached only through
+`tools/oracle/judge.py`. Nothing under `core/` imports it. Without it the
+oracle tests skip — and `CorpusHealth.may_recommend` stays false, which is the
+intended behaviour rather than an inconvenience.
+
 ### Checks that must pass
 
 ```bash

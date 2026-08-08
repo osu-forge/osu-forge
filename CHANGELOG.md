@@ -69,6 +69,9 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 - `osuforge.replay.validate` — the screen that decides whether to believe a
   simulation, and the circuit breaker that withholds any recommendation from a
   corpus it does not.
+- `osuforge.replay.oracle` — object-by-object comparison against circleguard,
+  run as a separate process in an isolated environment. This is what authorises
+  an offset recommendation; the header screen on its own never does.
 
 ### Changed
 - Integration tests are deselected by default and require an environment

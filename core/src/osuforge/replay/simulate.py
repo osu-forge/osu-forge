@@ -37,6 +37,14 @@ than hidden:
    whether it truncates or rounds is unverified. :func:`simulate` rounds.
    :mod:`osuforge.replay.validate` reports how many beatmaps in a corpus even
    have a fractional window, which is what decides whether the question matters.
+
+   The related question of whether the comparison is strict *is* settled. 318
+   circle hits in the local corpus land exactly on a window edge, which is
+   enough to tell the two apart: with ``<`` the corpus ends up 65 objects over
+   on 300s, and with ``<=`` it ends up 358 over. It is strict. circleguard
+   disagrees here and is where the question came from — 22 of the 31 circles the
+   two implementations grade differently are boundary cases of exactly this
+   shape, and the replay headers side against it.
 2. **Notelock.** The model here is that a press goes to the earliest object
    still inside its own window, and that a press arriving before that object's
    window opens is discarded rather than passed to a later object. That is the
