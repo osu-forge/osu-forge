@@ -146,3 +146,17 @@ class Beatmap:
     def beatmap_id(self) -> int | None: ...
     @property
     def beatmap_set_id(self) -> int | None: ...
+    @property
+    def background(self) -> str | None:
+        """Background image file name, relative to the beatmap's folder."""
+
+    @property
+    def length(self) -> float:
+        """Milliseconds from the first object to the last."""
+
+    @property
+    def bpm(self) -> float:
+        """Beats per minute of the most-used timing point."""
+
+    @property
+    def object_count(self) -> int: ...

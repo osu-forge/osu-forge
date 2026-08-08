@@ -262,6 +262,10 @@ pub fn parse(data: &[u8]) -> Result<Beatmap, ParseError> {
     timing_points.sort_by(|a, b| a.time.total_cmp(&b.time));
     hit_objects.sort_by_key(|o| o.time);
 
+    metadata.background = raw_sections
+        .get("Events")
+        .and_then(|lines| lines.iter().find_map(|line| background_of(line)));
+
     let mut beatmap = Beatmap {
         format_version,
         // Overwritten by `apply_stacking` on the next line. There is deliberately
@@ -281,6 +285,27 @@ pub fn parse(data: &[u8]) -> Result<Beatmap, ParseError> {
     };
     beatmap.apply_stacking();
     Ok(beatmap)
+}
+
+/// The background image named by an `[Events]` line, if it names one.
+///
+/// The section holds storyboard commands as well, which are far more numerous
+/// and start with a letter. A background is `0,0,"file",x,y` — event type zero,
+/// layer zero, then a quoted name. Videos are type 1 and look almost identical,
+/// which is why the type is checked rather than the quotes being taken from the
+/// first line that has any.
+fn background_of(line: &str) -> Option<String> {
+    let mut fields = line.split(',');
+    if fields.next()?.trim() != "0" {
+        return None;
+    }
+    // Second field is the start time, zero for a background.
+    fields.next()?;
+    let name = fields.next()?.trim().trim_matches('"');
+    if name.is_empty() {
+        return None;
+    }
+    Some(name.to_string())
 }
 
 fn decode(data: &[u8]) -> String {

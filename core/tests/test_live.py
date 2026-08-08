@@ -2,13 +2,13 @@
 
 from __future__ import annotations
 
-import re
 from datetime import UTC, datetime
 from pathlib import Path
 
 import osu_forge_diffcalc as diffcalc
 import pytest
 
+from osuforge.analysis.failures import FailureReport
 from osuforge.analysis.patterns import Attribution
 from osuforge.live.render import REFRESH_SECONDS, render
 from osuforge.live.watch import BeatmapIndex, Play, Session, analyse
@@ -30,6 +30,7 @@ def play(
     title: str = "Some Song",
     agreement: Agreement = Agreement.EXACT,
     errors: list[float] | None = None,
+    background: Path | None = None,
 ) -> Play:
     return Play(
         replay_name="a.osr",
@@ -37,6 +38,13 @@ def play(
         artist="Artist",
         title=title,
         version="Insane",
+        background=background,
+        bpm=180.0,
+        object_count=524,
+        length_ms=125_000,
+        circle_size=4.0,
+        approach_rate=9.0,
+        overall_difficulty=8.0,
         accuracy=0.9812,
         counts={Grade.THREE_HUNDRED: 500, Grade.HUNDRED: 20, Grade.FIFTY: 1, Grade.MISS: 3},
         agreement=agreement,
@@ -45,6 +53,7 @@ def play(
         aim_errors=[0.1 * (i % 9) for i in range(400)],
         presses={Button.K1: 260, Button.K2: 240},
         attribution=Attribution(accuracy=0.98, total_loss=10.0, judged=524, shares=[]),
+        report=FailureReport(failures=[], max_combo=500, reported_max_combo=500),
     )
 
 
@@ -64,17 +73,29 @@ class TestPage:
         assert "98.12%" in page
         assert "unstable rate" in page
 
-    def test_nothing_is_fetched_from_anywhere(self) -> None:
-        # The report has to work with no network, and a page that fetches
-        # nothing cannot say what it is about by fetching it. This is the same
-        # property CI asserts over generated reports.
+    def test_nothing_is_fetched_over_a_network(self) -> None:
+        # The page has to work offline, and one that reaches nowhere cannot say
+        # what it is about by reaching somewhere. The map's own background is
+        # the single exception and it is a `file:` URL on the same disk as the
+        # page — it embeds nothing, and a page copied elsewhere loses its
+        # thumbnails rather than phoning home for them.
         session = Session()
         session.add(play())
         page = render(session)
         assert "http://" not in page
         assert "https://" not in page
-        assert not re.search(r"\bsrc\s*=", page)
+        assert "//" not in page.replace("file://", "")
         assert "<script" not in page.lower()
+
+    def test_a_background_is_referenced_locally_and_never_embedded(self, tmp_path: Path) -> None:
+        image = tmp_path / "bg.jpg"
+        image.write_bytes(b"\xff\xd8\xff")
+        session = Session()
+        session.add(play(background=image))
+        page = render(session)
+        assert image.as_uri() in page
+        # Embedding would put a few megabytes per play into the file.
+        assert "base64" not in page
 
     def test_a_beatmap_title_cannot_inject_markup(self) -> None:
         # Titles come from files on disk, which are not necessarily the user's.

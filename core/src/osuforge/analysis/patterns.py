@@ -104,9 +104,22 @@ class ObjectContext:
     """Distance from the previous object, in radii. Circle size cancels."""
 
     angle: float | None
-    """Turn at this object in radians, from the previous two. `None` for the
-    first two objects of a map and after any gap large enough that the previous
-    object is not part of the same motion. Small is a sharp reversal."""
+    """The angle at the *previous* object, in radians, formed by the three
+    positions.
+
+    osu!'s own convention, which is worth matching rather than inventing a
+    second one: the angle is measured between the two vectors leaving the middle
+    object, so a straight line through it is pi and doubling back on yourself is
+    zero. **Small is a sharp reversal.**
+
+    A first version measured the angle between the two movement vectors instead,
+    which is the same quantity subtracted from pi — and then labelled small
+    values "sharp reversals", which they were not. Every reversal in the data
+    came out at 160 to 180 degrees and was filed under "everything else".
+
+    `None` for the first two objects of a map and across any gap long enough
+    that the previous object is not part of the same motion.
+    """
 
     rhythm_ratio: float | None
     """This gap divided by the previous one. Far from 1 is a rhythm change, which
@@ -155,11 +168,14 @@ def contexts_for(beatmap: diffcalc.Beatmap) -> list[ObjectContext]:
             # A turn only means something when the two motions belong together.
             # Across a break, the "angle" is between a movement and a rest.
             if gap < 2000.0 and previous_gap < 2000.0:
-                first = (previous.x - before.x, previous.y - before.y)
-                second = (obj.x - previous.x, obj.y - previous.y)
-                if any(first) and any(second):
-                    dot = first[0] * second[0] + first[1] * second[1]
-                    norm = math.hypot(*first) * math.hypot(*second)
+                # Both vectors leave the middle object, so the result is the
+                # angle you would measure with a protractor at it: pi for a
+                # straight line, zero for doubling back.
+                incoming = (before.x - previous.x, before.y - previous.y)
+                outgoing = (obj.x - previous.x, obj.y - previous.y)
+                if any(incoming) and any(outgoing):
+                    dot = incoming[0] * outgoing[0] + incoming[1] * outgoing[1]
+                    norm = math.hypot(*incoming) * math.hypot(*outgoing)
                     angle = math.acos(max(-1.0, min(1.0, dot / norm)))
 
         contexts.append(ObjectContext(index, velocity, spacing, angle, rhythm, visible))
@@ -281,7 +297,7 @@ def attribute(simulation: Simulation, beatmap: diffcalc.Beatmap) -> Attribution:
             f"fastest 10% of this map (over {fast:.2f} px/ms)": [
                 position for position, hit in enumerate(hits) if contexts[hit.index].velocity > fast
             ],
-            "the rest": [
+            f"the slower 90% (under {fast:.2f} px/ms)": [
                 position
                 for position, hit in enumerate(hits)
                 if contexts[hit.index].velocity <= fast
@@ -289,15 +305,18 @@ def attribute(simulation: Simulation, beatmap: diffcalc.Beatmap) -> Attribution:
         },
     )
 
+    # Every label has to make sense on its own, including the complement. An
+    # earlier version called this one "everything else", which told a reader
+    # nothing at the moment they most needed telling.
     add(
         "turn",
         {
-            "sharp reversals (under 60 degrees)": [
+            "sharp reversals (turning back under 60 degrees)": [
                 position
                 for position, hit in enumerate(hits)
                 if (angle := contexts[hit.index].angle) is not None and angle < math.pi / 3
             ],
-            "everything else": [
+            "gentle turns and straight runs": [
                 position
                 for position, hit in enumerate(hits)
                 if (angle := contexts[hit.index].angle) is None or angle >= math.pi / 3
@@ -331,7 +350,7 @@ def attribute(simulation: Simulation, beatmap: diffcalc.Beatmap) -> Attribution:
                 for position, hit in enumerate(hits)
                 if contexts[hit.index].visible > crowded
             ],
-            "the rest": [
+            f"the less crowded 90% ({crowded:.0f} or fewer on screen)": [
                 position
                 for position, hit in enumerate(hits)
                 if contexts[hit.index].visible <= crowded

@@ -225,6 +225,16 @@ class Hit:
     update, so that frame is the game's own view of where the cursor was.
     """
 
+    parts_collected: int | None = None
+    """For a slider, how many of its scoring points were collected, head included.
+
+    ``None`` for anything that is not a slider. Carried because combo counts
+    every one of them, so "how much combo did that cost" cannot be answered from
+    the grade alone.
+    """
+
+    parts_total: int | None = None
+
     excluded: str | None = None
     """Why this hit is not usable for timing analysis, or ``None`` if it is.
 
@@ -580,6 +590,8 @@ def _judge(
             excluded=excluded,
         )
 
+    collected: int | None
+    total: int | None
     if obj.kind is diffcalc.ObjectKind.Slider:
         # The head is one scoring part among several, and a slider whose head
         # was missed still scores off ticks collected while sliding through it.
@@ -608,10 +620,13 @@ def _judge(
             tracking = held and (x - part.x) ** 2 + (y - part.y) ** 2 <= limit
             if tracking:
                 collected += 1
-        grade = _slider_grade(collected, 1 + len(obj.parts))
+        total = 1 + len(obj.parts)
+        grade = _slider_grade(collected, total)
     elif head.hit and head.error is not None:
+        collected = total = None
         grade = _grade_for(abs(head.error), windows)
     else:
+        collected = total = None
         grade = Grade.MISS
 
     return Hit(
@@ -620,6 +635,8 @@ def _judge(
         kind=obj.kind,
         grade=grade,
         grade_inferred=False,
+        parts_collected=collected,
+        parts_total=total,
         error=head.error,
         press_time=head.press_time,
         button=head.button,

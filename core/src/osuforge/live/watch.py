@@ -22,6 +22,7 @@ from pathlib import Path
 
 import osu_forge_diffcalc as diffcalc
 
+from osuforge.analysis.failures import Failure, FailureReport, failures
 from osuforge.analysis.patterns import Attribution, Share, attribute
 from osuforge.replay.frames import Button
 from osuforge.replay.model import Replay
@@ -68,6 +69,21 @@ class Play:
     title: str
     version: str
 
+    background: Path | None
+    """Full path to the map's background image, if it has one and it exists.
+
+    A path rather than the image: embedding a few megabytes of JPEG per play
+    would make the page enormous, and the browser is already looking at a local
+    file so it can read a neighbouring one.
+    """
+
+    bpm: float
+    object_count: int
+    length_ms: float
+    circle_size: float
+    approach_rate: float
+    overall_difficulty: float
+
     accuracy: float
     """From the replay header — the game's own figure, not the simulation's."""
 
@@ -83,10 +99,36 @@ class Play:
 
     presses: dict[Button, int]
     attribution: Attribution
+    report: FailureReport
 
     @property
     def usable(self) -> bool:
         return self.agreement is not Agreement.MISMATCH
+
+    @property
+    def breaks(self) -> list[Failure]:
+        """The failures worth showing, in map order.
+
+        Misses always; slider drops only when the combo arithmetic checks out
+        against the game's own figure.
+        """
+        return self.report.shown_breaks()
+
+    @property
+    def sliderbreaks(self) -> int:
+        return len(self.report.sliderbreaks) if self.report.combo_agrees else 0
+
+    @property
+    def max_combo(self) -> int:
+        return self.report.max_combo
+
+    @property
+    def reported_max_combo(self) -> int:
+        return self.report.reported_max_combo
+
+    @property
+    def combo_caveat(self) -> str | None:
+        return self.report.caveat()
 
     @property
     def mean_error(self) -> float:
@@ -193,11 +235,25 @@ class BeatmapIndex:
 
 
 def _play_from(
-    path: Path, replay: Replay, beatmap: diffcalc.Beatmap, simulation: Simulation, check: Validation
+    path: Path,
+    replay: Replay,
+    beatmap: diffcalc.Beatmap,
+    beatmap_path: Path,
+    simulation: Simulation,
+    check: Validation,
 ) -> Play:
     presses: dict[Button, int] = {}
     for event in simulation.frames.press_events:
         presses[event.button] = presses.get(event.button, 0) + 1
+    played = beatmap.with_mods(int(replay.mods))
+
+    background: Path | None = None
+    if beatmap.background:
+        candidate = beatmap_path.parent / beatmap.background
+        # Checked rather than assumed. A map whose background was deleted, or
+        # whose Events section names a file that is not there, would otherwise
+        # render as a broken image on every row.
+        background = candidate if candidate.is_file() else None
 
     return Play(
         replay_name=path.name,
@@ -205,6 +261,13 @@ def _play_from(
         artist=beatmap.artist,
         title=beatmap.title,
         version=beatmap.version,
+        background=background,
+        bpm=beatmap.bpm,
+        object_count=beatmap.object_count,
+        length_ms=beatmap.length,
+        circle_size=played.circle_size,
+        approach_rate=played.approach_rate,
+        overall_difficulty=played.overall_difficulty,
         accuracy=replay.judgements.accuracy,
         counts=simulation.counts(),
         agreement=check.agreement,
@@ -216,7 +279,8 @@ def _play_from(
             if hit.aim_error is not None and hit.kind is diffcalc.ObjectKind.Circle
         ],
         presses=presses,
-        attribution=attribute(simulation, beatmap.with_mods(int(replay.mods))),
+        attribution=attribute(simulation, played),
+        report=failures(simulation, played, reported_max_combo=replay.max_combo),
     )
 
 
@@ -244,4 +308,4 @@ def analyse(path: Path, index: BeatmapIndex) -> Play | str:
 
     simulation = simulate(replay, beatmap)
     check = validate(simulation, replay.judgements)
-    return _play_from(path, replay, beatmap, simulation, check)
+    return _play_from(path, replay, beatmap, beatmap_path, simulation, check)

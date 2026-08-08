@@ -325,6 +325,67 @@ impl Beatmap {
         self.inner.metadata.beatmap_set_id
     }
 
+    /// File name of the background image, relative to the beatmap's folder.
+    #[getter]
+    fn background(&self) -> Option<&str> {
+        self.inner.metadata.background.as_deref()
+    }
+
+    /// Milliseconds from the first object to the last. Not the audio length.
+    #[getter]
+    fn length(&self) -> f64 {
+        let objects = &self.inner.hit_objects;
+        match (objects.first(), objects.last()) {
+            (Some(first), Some(last)) => {
+                let end = self
+                    .inner
+                    .slider_end_time(last)
+                    .or_else(|| last.end_time_simple().map(f64::from))
+                    .unwrap_or(f64::from(last.time));
+                end - f64::from(first.time)
+            }
+            _ => 0.0,
+        }
+    }
+
+    /// Beats per minute of the most-used uninherited timing point.
+    ///
+    /// The one a player would call "the BPM". A map with a tempo change has
+    /// several, and picking the first would name whatever the intro happened to
+    /// be.
+    #[getter]
+    fn bpm(&self) -> f64 {
+        let mut best: Option<(f64, f64)> = None;
+        let points: Vec<_> = self
+            .inner
+            .timing_points
+            .iter()
+            .filter(|p| p.beat_length().is_some())
+            .collect();
+        let end = self
+            .inner
+            .hit_objects
+            .last()
+            .map_or(0.0, |o| f64::from(o.time));
+        for (index, point) in points.iter().enumerate() {
+            let next = points.get(index + 1).map_or(end, |p| p.time);
+            let duration = (next - point.time).max(0.0);
+            let beat = point.beat_length().unwrap_or(0.0);
+            if beat <= 0.0 {
+                continue;
+            }
+            if best.is_none_or(|(_, longest)| duration > longest) {
+                best = Some((60_000.0 / beat, duration));
+            }
+        }
+        best.map_or(0.0, |(bpm, _)| bpm)
+    }
+
+    #[getter]
+    fn object_count(&self) -> usize {
+        self.inner.hit_objects.len()
+    }
+
     fn __repr__(&self) -> String {
         format!(
             "Beatmap({} - {} [{}], {} objects)",

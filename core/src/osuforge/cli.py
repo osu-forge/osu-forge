@@ -189,15 +189,28 @@ def _live(args: argparse.Namespace) -> int:
 
     index = BeatmapIndex(songs_dir)
     session = Session()
-    # Replays that already exist are not this session's. Recording them as seen
-    # without analysing them is what makes the page start empty and fill up as
-    # you play, rather than opening on a wall of history.
-    seen = {path.name for path in replay_dir.glob("*.osr")}
-    page.write_text(render(session), encoding="utf-8")
+    existing = sorted(replay_dir.glob("*.osr"), key=lambda path: path.stat().st_mtime)
+    seen = {path.name for path in existing}
 
     print(f"page:    {page}", file=sys.stderr)
-    print(f"open it in a browser; it reloads itself every {REFRESH_SECONDS}s", file=sys.stderr)
     print(f"beatmaps indexed: {len(index)}", file=sys.stderr)
+
+    # The page opens with recent plays already on it. A first version started
+    # empty, on the reasoning that a page should fill up as you play rather than
+    # open on a wall of history — which quietly threw away every play the user
+    # had already made and looked, reasonably, like the tool had lost them.
+    recent = existing[-args.history :] if args.history > 0 else []
+    if recent:
+        print(f"reading the last {len(recent)} play(s)...", file=sys.stderr)
+        for path in recent:
+            result = analyse(path, index)
+            if isinstance(result, str):
+                session.skipped[path.name] = result
+            else:
+                session.add(result)
+
+    page.write_text(render(session), encoding="utf-8")
+    print(f"open it in a browser; it reloads itself every {REFRESH_SECONDS}s", file=sys.stderr)
     print("Ctrl-C to stop. Nothing is left running afterwards.", file=sys.stderr)
 
     try:
@@ -412,6 +425,13 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     live.add_argument("--replays", type=Path, default=None, help="folder of .osr files")
     live.add_argument("--songs", type=Path, default=None, help="beatmap folder")
+    live.add_argument(
+        "--history",
+        type=int,
+        default=10,
+        metavar="N",
+        help="plays already on disk to show at startup (0 for none, default: 10)",
+    )
     live.add_argument(
         "--page",
         type=Path,

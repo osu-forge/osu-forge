@@ -327,6 +327,12 @@ pub struct Metadata {
     pub tags: Vec<String>,
     pub beatmap_id: Option<i32>,
     pub beatmap_set_id: Option<i32>,
+    /// File name of the background image, relative to the beatmap's folder.
+    ///
+    /// From the `[Events]` section rather than a second reader: a consumer that
+    /// wants to show the map needs it, and opening the file again to fish out
+    /// one line is how a project ends up with two parsers that disagree.
+    pub background: Option<String>,
 }
 
 /// Whether stack heights on a beatmap mean anything.

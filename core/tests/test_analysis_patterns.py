@@ -68,15 +68,24 @@ class TestContexts:
         assert wide[1].spacing < small[1].spacing
 
     def test_a_straight_line_is_a_wide_angle_and_a_reversal_is_a_narrow_one(self) -> None:
+        # osu!'s convention: the angle at the middle object, so a straight line
+        # through it is pi and doubling back is zero. An earlier version measured
+        # the angle between the movement vectors instead — the same quantity
+        # subtracted from pi — and then called small values "sharp reversals",
+        # which put every reversal in the data at 160 to 180 degrees and filed
+        # them under the opposite label.
         straight = contexts_for(beatmap("100,100,1000,1,0\n200,100,1200,1,0\n300,100,1400,1,0\n"))
-        assert straight[2].angle == pytest.approx(0.0, abs=1e-6), "no turn at all"
+        assert straight[2].angle == pytest.approx(math.pi, abs=1e-6), "no turn at all"
 
-        # The reversal does not return to the starting point. An earlier version
-        # of this fixture did, and the two coincident objects 400 ms apart
-        # stacked — which is correct behaviour and moved the third object two
-        # degrees off the straight line, exactly as it should.
+        # The reversal does not return to the starting point. An earlier fixture
+        # did, and the two coincident objects 400 ms apart stacked — correct
+        # behaviour, which moved the third object two degrees off the line.
         back = contexts_for(beatmap("100,100,1000,1,0\n300,100,1200,1,0\n150,100,1400,1,0\n"))
-        assert back[2].angle == pytest.approx(math.pi, abs=1e-6), "straight back"
+        assert back[2].angle == pytest.approx(0.0, abs=1e-6), "straight back"
+
+    def test_a_right_angle_reads_as_one(self) -> None:
+        turn = contexts_for(beatmap("100,100,1000,1,0\n300,100,1200,1,0\n300,300,1400,1,0\n"))
+        assert turn[2].angle == pytest.approx(math.pi / 2, abs=1e-6)
 
     def test_the_first_objects_have_no_angle_or_rhythm(self) -> None:
         contexts = contexts_for(beatmap("100,100,1000,1,0\n200,100,1200,1,0\n"))
