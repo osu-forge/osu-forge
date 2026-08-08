@@ -69,6 +69,13 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 - `osuforge.replay.validate` — the screen that decides whether to believe a
   simulation, and the circuit breaker that withholds any recommendation from a
   corpus it does not.
+- `osuforge.analysis.clustering` — a mean and an interval that account for hits
+  being nested in replays and replays in sessions, reporting the effective
+  sample size rather than the raw one. On the local corpus that is 893
+  independent hits out of 23,723.
+- An inclusion policy with its exclusions counted: replays with too few hits, or
+  with a miss rate high enough that the surviving errors are a truncated sample,
+  do not contribute a mean.
 - `osuforge.replay.oracle` — object-by-object comparison against circleguard,
   run as a separate process in an isolated environment. This is what authorises
   an offset recommendation; the header screen on its own never does.

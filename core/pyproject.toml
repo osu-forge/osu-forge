@@ -48,6 +48,7 @@ dev = [
     "ruff>=0.9",
     "mypy>=1.14",
     "types-psutil",
+    "scipy-stubs",
     "import-linter>=2.1",
 ]
 # NOTE: `circleguard` is deliberately absent from every extra. It is AGPL-3.0 and
