@@ -8,9 +8,9 @@ from pathlib import Path
 import osu_forge_diffcalc as diffcalc
 import pytest
 
-from osuforge.analysis.failures import FailureReport
-from osuforge.analysis.patterns import Attribution
-from osuforge.live.render import REFRESH_SECONDS, render
+from osuforge.analysis.failures import Clip, Failure, FailureReport
+from osuforge.analysis.patterns import Attribution, ObjectContext
+from osuforge.live.render import CLIPS_PER_PLAY, REFRESH_SECONDS, render
 from osuforge.live.watch import BeatmapIndex, Play, Session, analyse
 from osuforge.replay.frames import Button
 from osuforge.replay.simulate import Grade
@@ -25,13 +25,40 @@ MINIMAL_MAP = (
 )
 
 
+def miss(time: int, combo_lost: int) -> Failure:
+    """A miss with a clip around it, as the simulator would produce."""
+    cursor = [(200.0 + index * 3.0, 150.0 + index, time - 700 + index * 12) for index in range(58)]
+    return Failure(
+        time=time,
+        grade=Grade.MISS,
+        kind=diffcalc.ObjectKind.Circle,
+        broke_combo=True,
+        combo_lost=combo_lost,
+        error=None,
+        aim_error=None,
+        context=ObjectContext(
+            index=0, velocity=1.2, spacing=3.0, angle=1.0, rhythm_ratio=1.0, visible=4
+        ),
+        parts_collected=None,
+        parts_total=None,
+        clip=Clip(
+            radius=36.5,
+            objects=[(320.0, 190.0, time, True), (240.0, 165.0, time - 300, False)],
+            cursor=cursor,
+            presses=[(300.0, 185.0, time - 40)],
+        ),
+    )
+
+
 def play(
     *,
     title: str = "Some Song",
     agreement: Agreement = Agreement.EXACT,
     errors: list[float] | None = None,
     background: Path | None = None,
+    misses: list[tuple[int, int]] | None = None,
 ) -> Play:
+    found = [miss(time, combo) for time, combo in (misses or [])]
     return Play(
         replay_name="a.osr",
         played_at=datetime(2026, 8, 9, 21, 30, tzinfo=UTC),
@@ -53,7 +80,7 @@ def play(
         aim_errors=[0.1 * (i % 9) for i in range(400)],
         presses={Button.K1: 260, Button.K2: 240},
         attribution=Attribution(accuracy=0.98, total_loss=10.0, judged=524, shares=[]),
-        report=FailureReport(failures=[], max_combo=500, reported_max_combo=500),
+        report=FailureReport(failures=found, max_combo=500, reported_max_combo=500),
     )
 
 
@@ -134,6 +161,36 @@ class TestPage:
 
     def test_the_page_reloads_itself(self) -> None:
         assert f'content="{REFRESH_SECONDS}"' in render(Session())
+
+    def test_a_clip_plays_back_without_a_script(self) -> None:
+        # SVG has its own timing elements, so the cursor can follow the recorded
+        # path at the recorded pace with nothing executing on the page.
+        session = Session()
+        session.add(play(misses=[(12_000, 140)]))
+        page = render(session)
+        assert "<animateMotion" in page
+        assert 'repeatCount="indefinite"' in page
+        assert "<script" not in page.lower()
+        assert "onload" not in page.lower()
+
+    def test_a_clip_carries_the_whole_trail_as_well(self) -> None:
+        # An animation you have to watch three times to see the shape of is
+        # worse than a still. It is both.
+        session = Session()
+        session.add(play(misses=[(12_000, 140)]))
+        page = render(session)
+        assert page.count("<line") > 10, "the trail is drawn as segments"
+
+    def test_clips_are_capped_and_ordered_by_what_they_cost(self) -> None:
+        session = Session()
+        session.add(
+            play(misses=[(1000 * index, index * 10) for index in range(1, CLIPS_PER_PLAY + 4)])
+        )
+        page = render(session)
+        assert page.count("<animateMotion") == CLIPS_PER_PLAY
+        # Biggest loss first: the last miss made has the largest combo. Split on
+        # the opening tag, not the word — the stylesheet mentions it too.
+        assert f"lost {(CLIPS_PER_PLAY + 3) * 10}" in page.split("<figcaption>")[1]
 
     def test_skipped_replays_are_listed(self) -> None:
         session = Session()

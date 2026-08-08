@@ -101,14 +101,33 @@ def _histogram(errors: list[float], *, width: int = 560, height: int = 120) -> s
     )
 
 
+PLAYBACK_SLOWDOWN = 2.0
+"""How much slower than real time a clip plays.
+
+A clip is about a second long. At full speed the thing you are trying to see has
+happened before you have focused on it, and the point of drawing it at all is to
+be able to look.
+"""
+
+PLAYBACK_PAUSE = 0.7
+"""Seconds held at the end before the loop restarts, so the last moment — which
+is the one that matters — stays on screen long enough to register."""
+
+
 def _clip_svg(clip: Clip, *, size: int = 300) -> str:
-    """The moment around a miss, drawn.
+    """The moment around a miss, played back.
 
     A line of text says a turn was 41 degrees at 2.3 px/ms. This shows the
     cursor going there and not arriving, which is a different kind of knowing.
 
-    The path fades with age so its direction is readable without an arrowhead,
-    and the object that was missed is the only one drawn solid.
+    It animates, and it does so without a script. SVG has its own timing
+    elements, so the cursor follows the recorded path at the recorded pace,
+    objects appear when they became visible, and approach circles close the way
+    they did on screen. The page still runs nothing.
+
+    The whole trail is drawn underneath as well, fading from where it started.
+    An animation you have to watch three times to see the shape of is worse than
+    a still, and this way it is both.
     """
     if clip.empty:
         return ""
@@ -168,10 +187,90 @@ def _clip_svg(clip: Clip, *, size: int = 300) -> str:
             f'stroke-width="{stroke * 2.5:.2f}"/>'
         )
 
+    parts.extend(_clip_animation(clip, stroke))
     return (
         f'<svg viewBox="{view}" width="{size}" height="{size}" role="img" '
         f'aria-label="cursor path around the missed object">' + "".join(parts) + "</svg>"
     )
+
+
+def _clip_animation(clip: Clip, stroke: float) -> list[str]:
+    """The moving parts: a cursor that follows the record, and objects that
+    appear and close as they did."""
+    first = clip.cursor[0][2]
+    last = clip.cursor[-1][2]
+    span = last - first
+    if span <= 0:
+        return []
+
+    duration = span / 1000.0 * PLAYBACK_SLOWDOWN
+    total = duration + PLAYBACK_PAUSE
+    # The pause is expressed by holding the last keyframe rather than by a
+    # separate element: `keyTimes` reaching 1.0 early and then repeating the
+    # final value is what freezes it.
+    hold = duration / total
+
+    def times(values: list[float]) -> str:
+        """Fractions of the whole cycle, with the trailing hold appended."""
+        scaled = [f"{value * hold:.4f}" for value in values]
+        return ";".join([*scaled, "1"])
+
+    path = " ".join(
+        ("M" if index == 0 else "L") + f"{x:.1f},{y:.1f}"
+        for index, (x, y, _) in enumerate(clip.cursor)
+    )
+    # `keyPoints` is a position along the path and `keyTimes` is when to be
+    # there, so uneven sampling — which a replay has, at every frame the game
+    # dropped — comes out at the right pace rather than smoothed away.
+    lengths = [0.0]
+    for (x1, y1, _), (x2, y2, _) in zip(clip.cursor, clip.cursor[1:], strict=False):
+        lengths.append(lengths[-1] + math.dist((x1, y1), (x2, y2)))
+    travelled = lengths[-1] or 1.0
+    key_points = [length / travelled for length in lengths]
+    key_times = [(time - first) / span for _, _, time in clip.cursor]
+
+    parts = [
+        f'<circle r="{clip.radius * 0.16:.1f}" fill="currentColor">'
+        f'<animateMotion dur="{total:.2f}s" repeatCount="indefinite" '
+        f'path="{path}" calcMode="linear" '
+        f'keyPoints="{";".join(f"{value:.4f}" for value in [*key_points, 1])}" '
+        f'keyTimes="{times(key_times)}"/>'
+        "</circle>"
+    ]
+
+    for x, y, time, is_failure in clip.objects:
+        appears = max(0.0, min(1.0, (time - 600 - first) / span))
+        due = max(0.0, min(1.0, (time - first) / span))
+        gone = min(1.0, due + 0.08)
+        if due <= appears:
+            continue
+        # An approach circle closing onto the object is how a player reads when
+        # to click, so a playback without one is missing the cue the moment
+        # was actually about.
+        parts.append(
+            f'<circle cx="{x:.1f}" cy="{y:.1f}" fill="none" stroke="currentColor" '
+            f'stroke-width="{stroke * 1.5:.2f}" opacity="0">'
+            f'<animate attributeName="r" dur="{total:.2f}s" repeatCount="indefinite" '
+            f'values="{clip.radius * 3:.1f};{clip.radius:.1f};{clip.radius:.1f}" '
+            f'keyTimes="{times([appears, due, 1.0])}"/>'
+            f'<animate attributeName="opacity" dur="{total:.2f}s" repeatCount="indefinite" '
+            f'values="0;0;{0.9 if is_failure else 0.5};0" '
+            f'keyTimes="{times([max(0.0, appears - 0.001), appears, due, gone])}"/>'
+            "</circle>"
+        )
+
+    for x, y, time in clip.presses:
+        at = max(0.0, min(1.0, (time - first) / span))
+        parts.append(
+            f'<circle cx="{x:.1f}" cy="{y:.1f}" r="{clip.radius * 0.5:.1f}" '
+            f'fill="currentColor" opacity="0">'
+            f'<animate attributeName="opacity" dur="{total:.2f}s" repeatCount="indefinite" '
+            f'values="0;0;0.55;0;0" '
+            f'keyTimes="{times([0.0, max(0.0, at - 0.02), at, min(1.0, at + 0.06)])}"/>'
+            "</circle>"
+        )
+
+    return parts
 
 
 _TEMPLATE = _environment.from_string(

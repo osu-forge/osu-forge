@@ -34,6 +34,13 @@ dependencies = [
     "comtypes>=1.4.16",   # MIT           — WASAPI IAudioClient::GetDevicePeriod
     "pycaw>=20240210",    # MIT           — audio endpoint enumeration
     "httpx>=0.28",        # BSD-3-Clause  — osu! API v2 (optional at runtime)
+    # The local server the replay renderer talks to. Defensive by construction —
+    # see osuforge/server/security.py for what a server on the machine of
+    # someone who browses the web has to guard against, and for what the
+    # obvious approach gets wrong.
+    "fastapi>=0.115",     # MIT
+    "uvicorn>=0.34",      # BSD-3-Clause
+    "websockets>=13",     # BSD-3-Clause  — uvicorn's WebSocket implementation
 ]
 
 [project.optional-dependencies]
