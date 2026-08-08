@@ -7,6 +7,23 @@
 
 use std::collections::HashMap;
 
+/// Radius of a hit object at scale 1, in osu! pixels.
+pub const OBJECT_RADIUS: f64 = 64.0;
+
+/// How far one stack level shifts an object, before the object scale is
+/// applied. Up and to the left, hence the negation at the use site.
+pub const STACK_OFFSET_PER_LEVEL: f64 = 6.4;
+
+/// stable's hit radius is very slightly larger than `64 * scale`.
+///
+/// This factor is documented by the community rather than by ppy, and comes out
+/// of stable's playfield-to-screen mapping rather than from any deliberate
+/// rule. It is kept for fidelity, but it is worth being clear that it is
+/// negligible: on a CS4 map it moves the radius by 0.015 osu! pixels, far below
+/// anything a judgement could turn on. Nothing here should be believed *because*
+/// this factor is present.
+pub const STABLE_RADIUS_FUDGE: f64 = 1.000_41;
+
 /// osu! ruleset. Only [`Mode::Osu`] is implemented; the rest are parsed so a
 /// file for another mode is rejected with a clear reason rather than silently
 /// producing nonsense.
@@ -103,6 +120,9 @@ pub enum HitObjectKind {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct HitObject {
+    /// Position as written in the file, before stacking is applied. Use
+    /// [`HitObject::stacked_pos`] for where the object is actually drawn and
+    /// judged.
     pub pos: Pos,
     /// Milliseconds. Integers in the file format; stable parses them as such.
     pub time: i32,
@@ -111,9 +131,26 @@ pub struct HitObject {
     /// How many combo colours to skip past on a new combo.
     pub combo_skip: i32,
     pub hit_sound: i32,
+    /// How many objects this one is stacked on top of. Filled in by
+    /// [`crate::beatmap::Beatmap::apply_stacking`]; zero until then, and zero
+    /// for the great majority of objects on a normal map.
+    ///
+    /// Negative values are legitimate: circles that fall under the end of a
+    /// slider stack downward instead of upward.
+    pub stack_height: i32,
 }
 
 impl HitObject {
+    /// Where the object is drawn and where osu! tests the cursor against.
+    ///
+    /// `scale` comes from [`Difficulty::scale`]. Passing it in rather than
+    /// storing it keeps this type free of the difficulty settings, which change
+    /// under mods while the object does not.
+    pub fn stacked_pos(&self, scale: f64) -> Pos {
+        let offset = f64::from(self.stack_height) * scale * -STACK_OFFSET_PER_LEVEL;
+        Pos::new(self.pos.x + offset, self.pos.y + offset)
+    }
+
     pub fn is_circle(&self) -> bool {
         matches!(self.kind, HitObjectKind::Circle)
     }
@@ -197,6 +234,73 @@ pub struct Difficulty {
     pub slider_tick_rate: f64,
 }
 
+impl Difficulty {
+    /// osu!'s piecewise-linear reading of a 0–10 setting: 0 gives `min`, 5
+    /// gives `mid`, 10 gives `max`, linear on each side.
+    ///
+    /// The two halves have different slopes whenever `mid` is not the midpoint
+    /// of `min` and `max`, which is the case for every range osu! uses. A single
+    /// linear interpolation from `min` to `max` is a plausible-looking mistake
+    /// that is correct at exactly three points.
+    fn range(value: f64, min: f64, mid: f64, max: f64) -> f64 {
+        if value > 5.0 {
+            mid + (max - mid) * (value - 5.0) / 5.0
+        } else if value < 5.0 {
+            mid - (mid - min) * (5.0 - value) / 5.0
+        } else {
+            mid
+        }
+    }
+
+    /// How long an object is visible before its hit time, in milliseconds.
+    ///
+    /// Also the input to the stacking window, which is why it lives here rather
+    /// than in a drawing layer this crate does not have.
+    pub fn preempt(&self) -> f64 {
+        Self::range(self.approach_rate, 1800.0, 1200.0, 450.0)
+    }
+
+    /// Object scale factor from Circle Size.
+    ///
+    /// Computed in `f32` because stable does. The difference from `f64` is far
+    /// below a pixel, but matching the arithmetic costs nothing and removes a
+    /// question that would otherwise have to be re-answered every time a
+    /// position looks marginally off.
+    pub fn scale(&self) -> f64 {
+        let cs = self.circle_size as f32;
+        f64::from((1.0_f32 - 0.7_f32 * (cs - 5.0) / 5.0) / 2.0)
+    }
+
+    /// Hit-object radius in osu! pixels.
+    pub fn radius(&self) -> f64 {
+        OBJECT_RADIUS * self.scale() * STABLE_RADIUS_FUDGE
+    }
+
+    /// Half-width of the 300 window, in milliseconds of map time.
+    ///
+    /// Map time, not real time: under DT the window is unchanged here and the
+    /// clock runs faster, which is the same thing seen from the other side. A
+    /// consumer converting errors to real time divides by the rate.
+    ///
+    /// Returned unrounded. stable compares against an integer window, but which
+    /// rounding it uses is a question for whatever does the comparing — this
+    /// crate should not bake one in and then be quoted as the authority for it.
+    pub fn hit_window_300(&self) -> f64 {
+        80.0 - 6.0 * self.overall_difficulty
+    }
+
+    /// Half-width of the 100 window, in milliseconds of map time.
+    pub fn hit_window_100(&self) -> f64 {
+        140.0 - 8.0 * self.overall_difficulty
+    }
+
+    /// Half-width of the 50 window, in milliseconds of map time. Beyond this a
+    /// press on an object is a miss.
+    pub fn hit_window_50(&self) -> f64 {
+        200.0 - 10.0 * self.overall_difficulty
+    }
+}
+
 impl Default for Difficulty {
     /// osu!'s own defaults for a field that is absent.
     fn default() -> Self {
@@ -225,11 +329,27 @@ pub struct Metadata {
     pub beatmap_set_id: Option<i32>,
 }
 
+/// Whether stack heights on a beatmap mean anything.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Stacking {
+    /// Computed with the algorithm stable uses for format v6 and later.
+    Applied,
+    /// The file predates format v6, which stacked by a different algorithm.
+    ///
+    /// That algorithm is not implemented, so every stack height is zero and
+    /// positions are the raw file positions. This is recorded rather than
+    /// silently assumed, because "no stacking" and "stacking that happened to
+    /// produce no offsets" are indistinguishable from the heights alone.
+    UnsupportedLegacyFormat,
+}
+
 #[derive(Debug, Clone)]
 pub struct Beatmap {
     /// The `osu file format vN` header. Several defaults depend on it, so it is
     /// kept rather than discarded after parsing.
     pub format_version: i32,
+    /// Whether [`Beatmap::apply_stacking`] was able to run on this file.
+    pub stacking: Stacking,
     pub mode: Mode,
     pub stack_leniency: f64,
     pub audio_lead_in: i32,

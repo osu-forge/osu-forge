@@ -3,6 +3,7 @@ resolver = "2"
 members = [
     "engine",
     "diffcalc",
+    "diffcalc/pyo3",
 ]
 
 [workspace.package]
@@ -24,11 +25,20 @@ serde_json = "1"
 thiserror = "2"
 
 [profile.release]
-# The engine binary is code-signed and distributed. Keep it small and stripped,
-# but do NOT pack or obfuscate — both make AV heuristics worse, and we already
-# fight enough false positives.
+# Keep binaries small and stripped, but do NOT pack or obfuscate — both make AV
+# heuristics worse, and we already fight enough false positives.
 opt-level = 3
 lto = "thin"
 codegen-units = 1
 strip = "symbols"
+
+# Aborting on panic makes the engine binary smaller, and it is the one artifact
+# we code-sign and ship on its own. It cannot go on `release` above: `panic` is
+# not overridable per package, and the PyO3 extension module has to unwind. PyO3
+# turns a Rust panic into a Python exception by catching the unwind, so under
+# `abort` an unexpected panic on a malformed beatmap would take the whole
+# interpreter down with no traceback. Build the engine with
+# `--profile engine-release`.
+[profile.engine-release]
+inherits = "release"
 panic = "abort"

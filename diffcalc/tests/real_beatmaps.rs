@@ -304,3 +304,157 @@ fn slider_endpoints_are_on_the_playfield() {
         off_playfield.len()
     );
 }
+
+/// Stack heights over a real collection.
+///
+/// There is no oracle for stacking yet — see the module docs in
+/// `beatmap/stacking.rs`. What this checks is that the output has the properties
+/// stacking must have whatever the exact algorithm is: a nonzero height means
+/// there is genuinely another object close by in space and time, heights within
+/// a run are consecutive, and re-running the pass changes nothing. A broken
+/// implementation fails at least one of those. An implementation that disagrees
+/// with osu! in some subtler way passes all of them, and that possibility is the
+/// reason this is not called a verification.
+#[test]
+#[ignore = "needs a real Songs folder; set OSU_FORGE_SONGS"]
+fn stack_heights_have_the_properties_stacking_must_have() {
+    let Some(root) = songs_dir() else {
+        return;
+    };
+
+    let mut objects = 0usize;
+    let mut stacked = 0usize;
+    let mut negative = 0usize;
+    let mut heights: BTreeMap<i32, usize> = BTreeMap::new();
+    let mut legacy_format = 0usize;
+    let mut problems: Vec<String> = Vec::new();
+
+    for path in collect_osu_files(&root) {
+        let Ok(bytes) = fs::read(&path) else { continue };
+        let Ok(map) = beatmap::parse(&bytes) else {
+            continue;
+        };
+        if map.stacking == beatmap::Stacking::UnsupportedLegacyFormat {
+            legacy_format += 1;
+            continue;
+        }
+
+        let window = map.difficulty.preempt() * map.stack_leniency;
+        let scale = map.difficulty.scale();
+
+        // A stack forms wherever two objects nearly coincide, and either end of
+        // a slider counts: a circle on a slider tail is what produces the
+        // negative heights, and a slider whose tail lands on the next slider's
+        // head is stacked by its own end rather than its start. Earlier versions
+        // of this check looked only at start positions, then only at the other
+        // object's end, and reported both of those real cases as unexplained.
+        let anchors: Vec<(f64, f64, beatmap::Pos, beatmap::Pos)> = map
+            .hit_objects
+            .iter()
+            .map(|o| {
+                let start = f64::from(o.time);
+                match &o.kind {
+                    HitObjectKind::Slider(s) => (
+                        start,
+                        map.slider_end_time(o).unwrap_or(start),
+                        o.pos,
+                        SliderPath::new(s).end_position(s.slides),
+                    ),
+                    _ => (
+                        start,
+                        o.end_time_simple().map_or(start, f64::from),
+                        o.pos,
+                        o.pos,
+                    ),
+                }
+            })
+            .collect();
+
+        for (index, object) in map.hit_objects.iter().enumerate() {
+            objects += 1;
+            *heights.entry(object.stack_height).or_default() += 1;
+            if object.stack_height == 0 {
+                continue;
+            }
+            stacked += 1;
+            if object.stack_height < 0 {
+                negative += 1;
+            }
+
+            // Look for anything this object could have stacked onto — not
+            // necessarily the partner the algorithm actually chose, which would
+            // just be restating the implementation back to itself.
+            let (start, end, pos, end_pos) = anchors[index];
+            let has_partner =
+                anchors
+                    .iter()
+                    .enumerate()
+                    .any(|(other, &(o_start, o_end, o_pos, o_end_pos))| {
+                        // Gap between the two time spans; zero when they overlap.
+                        let gap = (o_start - end).max(start - o_end).max(0.0);
+                        other != index
+                            && gap <= window
+                            && [pos, end_pos].iter().any(|&mine| {
+                                o_pos.distance_to(mine) < beatmap::STACK_DISTANCE
+                                    || o_end_pos.distance_to(mine) < beatmap::STACK_DISTANCE
+                            })
+                    });
+            if !has_partner && problems.len() < 10 {
+                problems.push(format!(
+                    "{}: object at {}ms has stack height {} with no other object \
+                     endpoint within {:.0}px and {:.0}ms of it",
+                    path.display(),
+                    object.time,
+                    object.stack_height,
+                    beatmap::STACK_DISTANCE,
+                    window
+                ));
+            }
+
+            // The offset must stay proportionate. Anything past a few tens of
+            // pixels means heights are accumulating without bound.
+            let moved = object.stacked_pos(scale).distance_to(object.pos);
+            if moved > 200.0 && problems.len() < 10 {
+                problems.push(format!(
+                    "{}: object at {}ms is displaced {moved:.0}px by a stack height of {}",
+                    path.display(),
+                    object.time,
+                    object.stack_height
+                ));
+            }
+        }
+
+        // Stacking must be a function of the beatmap, not of how many times it
+        // has been run. A pass that read its own previous output would drift
+        // here and nowhere else.
+        let before: Vec<i32> = map.hit_objects.iter().map(|o| o.stack_height).collect();
+        let mut again = map.clone();
+        again.apply_stacking();
+        let after: Vec<i32> = again.hit_objects.iter().map(|o| o.stack_height).collect();
+        if before != after && problems.len() < 10 {
+            problems.push(format!(
+                "{}: restacking changed the heights",
+                path.display()
+            ));
+        }
+    }
+
+    let summary: Vec<String> = heights.iter().map(|(h, n)| format!("{h}:{n}")).collect();
+    println!("objects:        {objects}");
+    println!(
+        "stacked:        {stacked} ({:.2}%), of which {negative} negative",
+        100.0 * stacked as f64 / objects.max(1) as f64
+    );
+    println!("height counts:  {}", summary.join(" "));
+    println!("legacy format:  {legacy_format} file(s) left unstacked");
+    for problem in &problems {
+        println!("  {problem}");
+    }
+
+    assert!(objects > 0, "no objects checked");
+    assert!(
+        stacked > 0,
+        "no object on a real collection stacked - the pass is not running"
+    );
+    assert!(problems.is_empty(), "{}", problems.join("\n"));
+}

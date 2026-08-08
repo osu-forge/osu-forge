@@ -1,0 +1,22 @@
+[package]
+name = "osu-forge-diffcalc-python"
+description = "Python bindings for osu-forge's beatmap and difficulty calculation"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+publish = false
+
+[lib]
+# Imported from Python as `osu_forge_diffcalc._native`; the package around it is
+# plain Python so the type stubs have somewhere to live.
+name = "_native"
+crate-type = ["cdylib"]
+
+[dependencies]
+osu-forge-diffcalc = { path = ".." }
+# `extension-module` keeps the .pyd from linking libpython, which is what lets a
+# wheel built here load into any matching interpreter.
+pyo3 = { version = "0.29", features = ["extension-module"] }

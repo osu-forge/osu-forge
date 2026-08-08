@@ -1,0 +1,50 @@
+[build-system]
+requires = ["maturin>=1.7,<2"]
+build-backend = "maturin"
+
+[project]
+name = "osu-forge-diffcalc"
+description = "Beatmap parsing and difficulty calculation for osu!std, as a Python extension"
+requires-python = ">=3.14"
+license = "Apache-2.0"
+# No `license-files`: maturin refuses a glob containing `..`, and the LICENSE and
+# NOTICE live at the repository root. This wheel is not published — it is built
+# from a checkout that carries both — so the SPDX expression above is the whole
+# of the metadata. Publishing it would mean copying those two files in here
+# first, because Apache-2.0 §4(d) requires the NOTICE to travel with the
+# distribution.
+authors = [{ name = "osu-forge contributors" }]
+classifiers = [
+    "Development Status :: 2 - Pre-Alpha",
+    "License :: OSI Approved :: Apache Software License",
+    "Programming Language :: Python :: 3.14",
+    "Programming Language :: Rust",
+    "Topic :: Games/Entertainment",
+]
+dynamic = ["version"]
+
+[project.urls]
+Homepage = "https://github.com/osu-forge/osu-forge"
+
+# ruff picks up the nearest pyproject.toml that actually has a [tool.ruff]
+# section, so without this the files under python/ would be linted with ruff's
+# defaults while core/ uses its own settings. Two small blocks, each correct for
+# its own tree, rather than one root config that would have to carry a `src` for
+# both layouts.
+[tool.ruff]
+line-length = 100
+target-version = "py314"
+src = ["python"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "N", "UP", "B", "A", "C4", "SIM", "RUF"]
+
+[tool.maturin]
+# Mixed layout: the compiled module is `osu_forge_diffcalc._native` and the
+# package directory beside it holds the re-exports and the type stubs. A
+# pure-Rust layout would have no place to put a `.pyi`, and `osuforge` is
+# type-checked under `mypy --strict` — an untyped import at exactly the boundary
+# where beatmap geometry enters Python would be the worst place to lose types.
+python-source = "python"
+module-name = "osu_forge_diffcalc._native"
+features = ["pyo3/extension-module"]

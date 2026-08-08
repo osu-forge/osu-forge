@@ -24,14 +24,18 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
 
-      - name: Build release binaries
-        run: cargo build --release --workspace
+      # `engine-release` is `release` plus `panic = "abort"`, which the engine
+      # wants for size and the PyO3 extension module must not have — see the
+      # profile comment in Cargo.toml. The engine is the only artifact signed and
+      # shipped here, so it is the only one built.
+      - name: Build the engine
+        run: cargo build --profile engine-release -p osu-forge-engine
 
       - name: Stage artifacts
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force dist | Out-Null
-          Copy-Item target\release\osu-forge-engine.exe dist\
+          Copy-Item target\engine-release\osu-forge-engine.exe dist\
           Copy-Item LICENSE, NOTICE, README.md dist\
 
       # Code signing is the only mitigation that reliably works against the

@@ -48,7 +48,10 @@ class Mods(IntFlag):
     FADE_IN = 1 << 20
     RANDOM = 1 << 21
     CINEMA = 1 << 22
-    TARGET = 1 << 23
+    # osu!'s own name for this is Target Practice. It was TARGET here until the
+    # cross-check against the Rust mod table objected, which is what that test
+    # is for.
+    TARGET_PRACTICE = 1 << 23
     KEY9 = 1 << 24
     KEY_COOP = 1 << 25
     KEY1 = 1 << 26

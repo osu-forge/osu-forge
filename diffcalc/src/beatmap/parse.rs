@@ -21,7 +21,7 @@ use std::collections::HashMap;
 
 use super::model::{
     Beatmap, CurveKind, Difficulty, HitObject, HitObjectKind, Metadata, Mode, Pos, Slider,
-    TimingPoint,
+    Stacking, TimingPoint,
 };
 
 /// Why a file could not be parsed.
@@ -262,8 +262,13 @@ pub fn parse(data: &[u8]) -> Result<Beatmap, ParseError> {
     timing_points.sort_by(|a, b| a.time.total_cmp(&b.time));
     hit_objects.sort_by_key(|o| o.time);
 
-    Ok(Beatmap {
+    let mut beatmap = Beatmap {
         format_version,
+        // Overwritten by `apply_stacking` on the next line. There is deliberately
+        // no "not stacked yet" variant: a beatmap that escaped this function
+        // unstacked would be indistinguishable from one that legitimately has no
+        // stacks, and every position read off it would be quietly wrong.
+        stacking: Stacking::Applied,
         mode,
         stack_leniency,
         audio_lead_in,
@@ -273,7 +278,9 @@ pub fn parse(data: &[u8]) -> Result<Beatmap, ParseError> {
         timing_points,
         hit_objects,
         raw_sections,
-    })
+    };
+    beatmap.apply_stacking();
+    Ok(beatmap)
 }
 
 fn decode(data: &[u8]) -> String {
@@ -368,6 +375,9 @@ fn parse_hit_object(parser: &Parser<'_>) -> Result<HitObject, ParseError> {
         new_combo,
         combo_skip,
         hit_sound,
+        // Filled in once the whole file is read: stacking depends on the
+        // approach rate and on the objects on either side.
+        stack_height: 0,
     })
 }
 

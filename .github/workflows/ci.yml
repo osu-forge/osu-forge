@@ -99,10 +99,19 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python }}
-      - name: Install
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      # osuforge reads beatmaps through the compiled diffcalc layer rather than
+      # through a second parser written in Python, so the Python job needs a Rust
+      # toolchain. The wheel is not on PyPI and is deliberately not declared as a
+      # dependency of core — it is built from this checkout, here.
+      - name: Build and install the diffcalc extension
         run: |
-          python -m pip install --upgrade pip
-          pip install -e "./core[dev]"
+          python -m pip install --upgrade pip "maturin>=1.7,<2"
+          maturin build -m diffcalc/pyo3/Cargo.toml --release --out dist
+          pip install --no-index --find-links dist osu-forge-diffcalc
+      - name: Install
+        run: pip install -e "./core[dev]"
       # ruff resolves config per-file by walking up to the nearest pyproject.toml,
       # so it runs correctly from the repo root and will also cover hwtest/ and
       # extensions/ once those exist.
@@ -124,6 +133,13 @@ jobs:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
+      # The workspace contains a PyO3 extension module, and building a cdylib on
+      # Windows links against a specific interpreter's import library. Pinning
+      # the interpreter here means the Rust job does not depend on whichever
+      # Python the runner image happens to ship.
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy

@@ -27,6 +27,7 @@
 #![doc(html_root_url = "https://github.com/osu-forge/osu-forge")]
 
 pub mod beatmap;
+pub mod mods;
 
 /// Version of this crate, surfaced in reports alongside the upstream commit
 /// recorded in `PORTED_FROM.md` so a pp figure can always be traced to the

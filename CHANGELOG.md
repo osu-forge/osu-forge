@@ -46,13 +46,33 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 - `osuforge.replay.frames` — marker stripping, key press/release extraction
   with device attribution, and a timing uncertainty on every event. Unknown
   uncertainty is reported as unknown rather than collapsed to zero.
+- Stack leniency, so an object's position is where it is drawn and judged rather
+  than where the file says. Files older than format v6 stacked by a different
+  algorithm; that one is not implemented and those files are reported as
+  unstacked instead of being stacked by the wrong rules.
+- Difficulty derivations on the beatmap: approach rate to preempt time, circle
+  size to object scale and radius, overall difficulty to judgement windows. The
+  windows are returned unrounded — which rounding stable applies is a decision
+  for whatever does the comparing.
+- Mod handling for Hard Rock and Easy. Double Time and Half Time deliberately
+  leave the beatmap alone: they change the clock, and applying them here as well
+  would count the same speed increase twice.
+- `osu_forge_diffcalc` — PyO3 bindings, so the replay hit simulator reads
+  beatmaps through the same parser as difficulty calculation instead of through
+  a second one written in Python.
 
 ### Changed
 - Integration tests are deselected by default and require an environment
   variable pointing at real data. A plain `pytest` run can no longer read
   anyone's osu! install.
+- `panic = "abort"` moved off the shared release profile onto a dedicated
+  `engine-release` profile. PyO3 turns a Rust panic into a Python exception by
+  catching the unwind, so under `abort` an unexpected panic would take the whole
+  interpreter down with no traceback. The engine still gets the smaller binary.
 
 ### Fixed
+- `osuforge` shipped without a `py.typed` marker, so every consumer saw it as
+  untyped however strictly it checks itself.
 - The Python license gate reported success when `pip-licenses` had failed and
   returned nothing. It now fails on a non-zero exit, unparseable output, an
   empty package list, or a missing canary package, and splits compound license

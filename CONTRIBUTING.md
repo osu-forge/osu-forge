@@ -60,10 +60,17 @@ Requires **Python 3.14+**, **Rust** (stable, `x86_64-pc-windows-msvc`), and
 
 ```bash
 py -3.14 -m venv .venv
-.venv\Scripts\pip install -e "core[dev]"
 rustup toolchain install stable
-cargo build --workspace
+.venv\Scripts\pip install "maturin>=1.7,<2"
+.venv\Scripts\maturin build -m diffcalc/pyo3/Cargo.toml --release --out dist
+.venv\Scripts\pip install --no-index --find-links dist osu-forge-diffcalc
+.venv\Scripts\pip install -e "core[dev]"
 ```
+
+`osu-forge-diffcalc` is the compiled beatmap layer. `osuforge` needs it and does
+not declare it as a dependency, because it is not on PyPI — it is built from this
+checkout by the two commands above. Rebuild it after changing anything under
+`diffcalc/`; a stale `.pyd` will happily keep answering with the old geometry.
 
 ### Checks that must pass
 
