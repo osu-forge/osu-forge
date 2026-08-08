@@ -59,8 +59,16 @@ Requires **Python 3.14+**, **Rust** (stable, `x86_64-pc-windows-msvc`), and
 **Windows 10/11**.
 
 ```bash
-py -3.14 -m venv .venv
 rustup toolchain install stable
+powershell -File scripts/dev-setup.ps1 -Oracle
+```
+
+That does the whole sequence: the virtualenv, the compiled beatmap extension,
+core in editable mode, and — with `-Oracle` — the isolated environment for the
+differential oracle. The long form, if you would rather do it by hand:
+
+```bash
+py -3.14 -m venv .venv
 .venv\Scripts\pip install "maturin>=1.7,<2"
 .venv\Scripts\maturin build -m diffcalc/pyo3/Cargo.toml --release --out dist
 .venv\Scripts\pip install --no-index --find-links dist osu-forge-diffcalc
