@@ -40,33 +40,10 @@ jobs:
           python -m pip install --upgrade pip
           pip install ./core
           pip install pip-licenses
+      # The check lives in a script rather than inline here so it can be run and
+      # tested locally. The inline version this replaced printed "all licenses
+      # are on the allowlist" while pip-licenses had actually failed and returned
+      # nothing — a gate that inspects zero packages and reports success.
       - name: Fail on copyleft dependencies
         shell: pwsh
-        run: |
-          # Allowlist, not denylist — fails closed. A dependency whose license
-          # cannot be determined is a failure, not a pass: absent a license,
-          # default copyright reserves all rights.
-          $allowed = @(
-            'Apache Software License','Apache-2.0','Apache 2.0',
-            'MIT License','MIT','MIT-0',
-            'BSD License','BSD-2-Clause','BSD-3-Clause',
-            'ISC License (ISCL)','ISC',
-            'Mozilla Public License 2.0 (MPL 2.0)','MPL-2.0',
-            'Python Software Foundation License',
-            'The Unlicense (Unlicense)','Unlicense',
-            'zlib/libpng License','Zlib',
-            'CC0 1.0 Universal (CC0 1.0) Public Domain Dedication',
-            'Historical Permission Notice and Disclaimer (HPND)'
-          )
-          $rows = pip-licenses --format=json --with-system=false | ConvertFrom-Json
-          $bad = $rows | Where-Object {
-            $lic = $_.License
-            (-not $lic) -or ($lic -eq 'UNKNOWN') -or
-            ($allowed -notcontains $lic -and ($allowed | Where-Object { $lic -like "*$_*" }).Count -eq 0)
-          }
-          if ($bad) {
-            Write-Host "Disallowed or undeterminable licenses found:"
-            $bad | ForEach-Object { Write-Host ("  {0} {1} -> {2}" -f $_.Name, $_.Version, $_.License) }
-            exit 1
-          }
-          Write-Host "All Python dependency licenses are on the allowlist."
+        run: .github/scripts/check-python-licenses.ps1
