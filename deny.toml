@@ -36,7 +36,14 @@ confidence-threshold = 0.93
 
 [bans]
 multiple-versions = "warn"
+# An unpinned version on a crates.io dependency lets an unreviewed upgrade arrive
+# without a lockfile change, so those stay denied.
 wildcards = "deny"
+# Path dependencies inside this workspace are exempt. They resolve to the source
+# in this repository rather than to whatever is on crates.io, so there is nothing
+# for a version constraint to protect against — and repeating the workspace
+# version on every intra-repo dependency only creates something to forget to bump.
+allow-wildcard-paths = true
 
 [advisories]
 yanked = "deny"

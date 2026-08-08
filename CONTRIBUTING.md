@@ -78,8 +78,11 @@ checkout by the two commands above. Rebuild it after changing anything under
 ruff check . && mypy core/src
 pytest
 cargo fmt --check && cargo clippy -- -D warnings && cargo test
-cargo deny check licenses
+cargo deny check licenses sources advisories bans
 ```
+
+That last one is written out in full because it is what CI runs. `cargo deny
+check licenses` on its own passes things `bans` rejects.
 
 ---
 
