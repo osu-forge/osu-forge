@@ -79,6 +79,10 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   replays exist and what the timing-relevant settings were, so that sessions and
   a settings history accumulate going forward. An offset estimate is limited by
   how many separate sessions it has, and sessions only accumulate forward.
+- `osuforge.analysis.patterns` — where a play's accuracy went, split across the
+  kinds of object that cost it. A partition rather than a model: the parts add
+  to the whole by construction, and groups are cut within one map at a time so
+  that approach rate, circle size and settings control for themselves.
 - `osuforge.analysis.clustering` — a mean and an interval that account for hits
   being nested in replays and replays in sessions, reporting the effective
   sample size rather than the raw one. On the local corpus that is 893
