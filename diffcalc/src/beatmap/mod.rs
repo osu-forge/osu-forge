@@ -6,9 +6,11 @@
 //! beatmap says — and if they did, the disagreement would show up as hit errors
 //! that look like a player problem.
 
+mod curve;
 mod model;
 mod parse;
 
+pub use curve::SliderPath;
 pub use model::{
     Beatmap, CurveKind, Difficulty, HitObject, HitObjectKind, Metadata, Mode, Pos, Slider,
     TimingPoint,

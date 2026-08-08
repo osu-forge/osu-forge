@@ -37,6 +37,9 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   durations, and the version-dependent `ApproachRate` fallback. Shared by
   difficulty calculation and the replay hit simulator so the two cannot
   disagree about what a beatmap says.
+- `SliderPath` — slider geometry for all four curve types, with arc-length
+  sampling and the declared-length trimming osu! applies. Checked against the
+  length field of every slider in a real collection.
 
 ### Fixed
 - The Python license gate reported success when `pip-licenses` had failed and
