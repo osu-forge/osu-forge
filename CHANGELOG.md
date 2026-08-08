@@ -40,6 +40,14 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 - `SliderPath` — slider geometry for all four curve types, with arc-length
   sampling and the declared-length trimming osu! applies. Checked against the
   length field of every slider in a real collection.
+- `osuforge.replay` — `.osr` parser: header, judgement counts, mods, and the
+  LZMA frame stream with delta accumulation and the trailing seed frame
+  separated out.
+
+### Changed
+- Integration tests are deselected by default and require an environment
+  variable pointing at real data. A plain `pytest` run can no longer read
+  anyone's osu! install.
 
 ### Fixed
 - The Python license gate reported success when `pip-licenses` had failed and

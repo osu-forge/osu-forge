@@ -81,9 +81,14 @@ files = ["src"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-addopts = "-q --strict-markers"
+# Integration tests are deselected by default and must be opted into with
+# `pytest -m integration`. They read real hardware and, where an environment
+# variable points them at one, a real osu! install — so a plain run has to stay
+# incapable of touching either. Run them with:
+#     OSU_FORGE_REPLAYS="%LOCALAPPDATA%\osu!\Data\r" pytest -m integration
+addopts = '-q --strict-markers -m "not integration"'
 markers = [
-    "integration: touches real hardware or a live osu! process (deselected by default)",
+    "integration: reads real hardware or a real osu! install (opt in with -m integration)",
 ]
 
 [tool.importlinter]
