@@ -10,7 +10,9 @@ authors.workspace = true
 
 [lib]
 name = "osu_forge_diffcalc"
-crate-type = ["rlib", "cdylib"]
+# `cdylib` goes back when the PyO3 bindings land. Building one now only produces
+# an import library nobody links and a linker warning on every build.
+crate-type = ["rlib"]
 
 [dependencies]
 serde.workspace = true

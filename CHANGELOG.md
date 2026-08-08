@@ -33,6 +33,10 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   process detection, and the monitor osu!'s window is actually on.
 - Nine system rules built on those probes, and `forge doctor` / `forge scan`
   with `--json`, `--only-facts`, `--severity` and `--fail-on`.
+- `osu_forge_diffcalc::beatmap` — `.osu` parser with timing points, slider
+  durations, and the version-dependent `ApproachRate` fallback. Shared by
+  difficulty calculation and the replay hit simulator so the two cannot
+  disagree about what a beatmap says.
 
 ### Fixed
 - The Python license gate reported success when `pip-licenses` had failed and
