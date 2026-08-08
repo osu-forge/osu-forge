@@ -168,7 +168,7 @@ class TestAdvisoryOnly:
             action for action in parser._actions if hasattr(action, "choices") and action.choices
         )
         commands = set(subparsers.choices)  # type: ignore[arg-type]
-        assert commands == {"doctor", "scan", "collect"}
+        assert commands == {"doctor", "scan", "collect", "live"}
         assert not commands & {"apply", "fix", "write", "set", "install", "repair"}
 
     def test_the_config_file_is_untouched_by_a_full_run(

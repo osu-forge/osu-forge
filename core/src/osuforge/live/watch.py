@@ -1,0 +1,247 @@
+"""Turning replays into something worth looking at, as they appear.
+
+A play produces a replay when it finishes, so watching the folder is enough to
+know a play happened and to have everything needed to analyse it. The loop is a
+poll rather than a filesystem notification: a new file appears at most once every
+couple of minutes, the folder holds a few dozen entries, and a poll cannot miss
+an event or fire twice on one.
+
+Nothing here decides anything. It reads, simulates, screens, and hands the
+result to be rendered — including whether the screen passed, so a play the
+simulator did not reproduce is shown as such rather than quietly left out.
+"""
+
+from __future__ import annotations
+
+import hashlib
+import math
+import os
+from dataclasses import dataclass, field
+from datetime import datetime
+from pathlib import Path
+
+import osu_forge_diffcalc as diffcalc
+
+from osuforge.analysis.patterns import Attribution, Share, attribute
+from osuforge.replay.frames import Button
+from osuforge.replay.model import Replay
+from osuforge.replay.parse import ReplayParseError, parse_path
+from osuforge.replay.simulate import Grade, Simulation, simulate
+from osuforge.replay.validate import Agreement, Validation, validate
+
+__all__ = [
+    "POLL_SECONDS",
+    "BeatmapIndex",
+    "Play",
+    "Session",
+    "analyse",
+    "default_page_path",
+]
+
+POLL_SECONDS = 2.0
+"""How often the replay folder is checked.
+
+A poll rather than a filesystem notification. A replay appears at most once
+every couple of minutes, the folder holds a few dozen entries, and a poll cannot
+miss an event or fire twice on one.
+"""
+
+
+def default_page_path() -> Path:
+    """Where the page is written.
+
+    Beside the tool's own data, never inside the osu! install — the game owns
+    that directory and rewrites parts of it.
+    """
+    base = os.environ.get("LOCALAPPDATA")
+    root = Path(base) if base else Path.home() / ".local" / "share"
+    return root / "osu-forge" / "live.html"
+
+
+@dataclass(frozen=True, slots=True)
+class Play:
+    """One finished play, analysed."""
+
+    replay_name: str
+    played_at: datetime
+    artist: str
+    title: str
+    version: str
+
+    accuracy: float
+    """From the replay header — the game's own figure, not the simulation's."""
+
+    counts: dict[Grade, int]
+    agreement: Agreement
+    agreement_reason: str
+
+    errors: list[float]
+    """Usable circle timing errors, real milliseconds, early negative."""
+
+    aim_errors: list[float]
+    """Distance from centre at the press, in radii."""
+
+    presses: dict[Button, int]
+    attribution: Attribution
+
+    @property
+    def usable(self) -> bool:
+        return self.agreement is not Agreement.MISMATCH
+
+    @property
+    def mean_error(self) -> float:
+        return sum(self.errors) / len(self.errors) if self.errors else math.nan
+
+    @property
+    def unstable_rate(self) -> float:
+        """Ten times the standard deviation of the hit errors, as osu! reports it."""
+        if len(self.errors) < 2:
+            return math.nan
+        mean = self.mean_error
+        variance = sum((error - mean) ** 2 for error in self.errors) / (len(self.errors) - 1)
+        return 10.0 * math.sqrt(variance)
+
+    @property
+    def key_balance(self) -> float:
+        """Share of keyboard presses on the first key. 0.5 is even."""
+        k1 = self.presses.get(Button.K1, 0)
+        k2 = self.presses.get(Button.K2, 0)
+        return k1 / (k1 + k2) if k1 + k2 else math.nan
+
+    def findings(self, limit: int = 3) -> list[Share]:
+        return self.attribution.worst(limit)
+
+
+@dataclass(slots=True)
+class Session:
+    """Everything analysed since the page was opened, newest first."""
+
+    plays: list[Play] = field(default_factory=list)
+    skipped: dict[str, str] = field(default_factory=dict)
+
+    def add(self, play: Play) -> None:
+        self.plays.insert(0, play)
+
+    @property
+    def usable(self) -> list[Play]:
+        return [play for play in self.plays if play.usable]
+
+    @property
+    def errors(self) -> list[float]:
+        return [error for play in self.usable for error in play.errors]
+
+    @property
+    def mean_error(self) -> float:
+        errors = self.errors
+        return sum(errors) / len(errors) if errors else math.nan
+
+    @property
+    def unstable_rate(self) -> float:
+        errors = self.errors
+        if len(errors) < 2:
+            return math.nan
+        mean = sum(errors) / len(errors)
+        variance = sum((error - mean) ** 2 for error in errors) / (len(errors) - 1)
+        return 10.0 * math.sqrt(variance)
+
+    @property
+    def key_balance(self) -> float:
+        k1 = sum(play.presses.get(Button.K1, 0) for play in self.usable)
+        k2 = sum(play.presses.get(Button.K2, 0) for play in self.usable)
+        return k1 / (k1 + k2) if k1 + k2 else math.nan
+
+
+class BeatmapIndex:
+    """Beatmaps by MD5, so a replay can find the map it was played on.
+
+    Built once and topped up. A full scan of a real collection takes under half a
+    second, but doing it every poll would read half a gigabyte a minute for no
+    reason, so only files that appeared since last time are hashed.
+    """
+
+    def __init__(self, songs: Path) -> None:
+        self.songs = songs
+        self._by_hash: dict[str, Path] = {}
+        self._seen: set[Path] = set()
+        self.refresh()
+
+    def refresh(self) -> int:
+        added = 0
+        for path in self.songs.rglob("*.osu"):
+            if path in self._seen:
+                continue
+            self._seen.add(path)
+            try:
+                digest = hashlib.md5(path.read_bytes()).hexdigest()
+            except OSError:
+                continue
+            self._by_hash.setdefault(digest, path)
+            added += 1
+        return added
+
+    def get(self, beatmap_hash: str) -> Path | None:
+        found = self._by_hash.get(beatmap_hash)
+        if found is None:
+            # A map downloaded since the index was built is the ordinary reason
+            # for a miss, and it is worth one rescan before giving up.
+            self.refresh()
+            found = self._by_hash.get(beatmap_hash)
+        return found
+
+    def __len__(self) -> int:
+        return len(self._by_hash)
+
+
+def _play_from(
+    path: Path, replay: Replay, beatmap: diffcalc.Beatmap, simulation: Simulation, check: Validation
+) -> Play:
+    presses: dict[Button, int] = {}
+    for event in simulation.frames.press_events:
+        presses[event.button] = presses.get(event.button, 0) + 1
+
+    return Play(
+        replay_name=path.name,
+        played_at=replay.timestamp,
+        artist=beatmap.artist,
+        title=beatmap.title,
+        version=beatmap.version,
+        accuracy=replay.judgements.accuracy,
+        counts=simulation.counts(),
+        agreement=check.agreement,
+        agreement_reason=check.reason,
+        errors=simulation.timing_errors(),
+        aim_errors=[
+            hit.aim_error
+            for hit in simulation.hits
+            if hit.aim_error is not None and hit.kind is diffcalc.ObjectKind.Circle
+        ],
+        presses=presses,
+        attribution=attribute(simulation, beatmap.with_mods(int(replay.mods))),
+    )
+
+
+def analyse(path: Path, index: BeatmapIndex) -> Play | str:
+    """Analyse one replay, or return why it could not be.
+
+    A reason rather than `None`, because "the beatmap is not installed" and "the
+    file is corrupt" want different responses from whoever is reading the page.
+    """
+    try:
+        replay = parse_path(path)
+    except (ReplayParseError, OSError) as exc:
+        return str(exc)
+    if not replay.usable_for_timing:
+        return "not an osu!standard play by a person"
+
+    beatmap_path = index.get(replay.beatmap_hash)
+    if beatmap_path is None:
+        return "the beatmap for this replay is not in the songs folder"
+
+    try:
+        beatmap = diffcalc.Beatmap.from_file(beatmap_path)
+    except diffcalc.BeatmapError as exc:
+        return str(exc)
+
+    simulation = simulate(replay, beatmap)
+    check = validate(simulation, replay.judgements)
+    return _play_from(path, replay, beatmap, simulation, check)

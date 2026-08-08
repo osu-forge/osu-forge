@@ -16,6 +16,7 @@ import argparse
 import dataclasses
 import json
 import sys
+import time
 from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any, TextIO
@@ -24,6 +25,8 @@ from osuforge import __version__
 from osuforge.collect.epoch import ConfigEpoch
 from osuforge.collect.journal import Journal, default_journal_path, scan
 from osuforge.config import ConfigNotFoundError, OsuConfig, find_config
+from osuforge.live.render import REFRESH_SECONDS, render
+from osuforge.live.watch import POLL_SECONDS, BeatmapIndex, Session, analyse, default_page_path
 from osuforge.models import Basis, Finding, Severity
 from osuforge.probes.base import ProbeResult
 from osuforge.probes.collect import collect_probes
@@ -163,6 +166,65 @@ def _doctor(args: argparse.Namespace) -> int:
         threshold = _SEVERITY_ORDER.index(Severity(args.fail_on))
         if any(f.severity.rank <= threshold for f in findings):
             return 1
+    return 0
+
+
+def _live(args: argparse.Namespace) -> int:
+    try:
+        config_path = find_config(args.config)
+    except ConfigNotFoundError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
+
+    install = config_path.parent
+    replay_dir = args.replays or install / "Data" / "r"
+    songs_dir = args.songs or install / "Songs"
+    for label, folder in (("replay", replay_dir), ("songs", songs_dir)):
+        if not folder.is_dir():
+            print(f"error: no {label} folder at {folder}", file=sys.stderr)
+            return 2
+
+    page = args.page or default_page_path()
+    page.parent.mkdir(parents=True, exist_ok=True)
+
+    index = BeatmapIndex(songs_dir)
+    session = Session()
+    # Replays that already exist are not this session's. Recording them as seen
+    # without analysing them is what makes the page start empty and fill up as
+    # you play, rather than opening on a wall of history.
+    seen = {path.name for path in replay_dir.glob("*.osr")}
+    page.write_text(render(session), encoding="utf-8")
+
+    print(f"page:    {page}", file=sys.stderr)
+    print(f"open it in a browser; it reloads itself every {REFRESH_SECONDS}s", file=sys.stderr)
+    print(f"beatmaps indexed: {len(index)}", file=sys.stderr)
+    print("Ctrl-C to stop. Nothing is left running afterwards.", file=sys.stderr)
+
+    try:
+        while True:
+            fresh = sorted(path for path in replay_dir.glob("*.osr") if path.name not in seen)
+            for path in fresh:
+                seen.add(path.name)
+                # osu! writes the file as the results screen appears; a moment's
+                # wait avoids reading one that is still being written, and a
+                # failure here is reported rather than retried forever.
+                time.sleep(0.5)
+                result = analyse(path, index)
+                if isinstance(result, str):
+                    session.skipped[path.name] = result
+                    print(f"  skipped {path.name}: {result}", file=sys.stderr)
+                else:
+                    session.add(result)
+                    print(
+                        f"  {result.artist} - {result.title} [{result.version}]: "
+                        f"{result.accuracy:.2%}, mean {result.mean_error:+.1f} ms",
+                        file=sys.stderr,
+                    )
+            if fresh:
+                page.write_text(render(session), encoding="utf-8")
+            time.sleep(POLL_SECONDS)
+    except KeyboardInterrupt:
+        print("\nstopped", file=sys.stderr)
     return 0
 
 
@@ -335,6 +397,28 @@ def _build_parser() -> argparse.ArgumentParser:
         help=f"where to append (default: {default_journal_path()})",
     )
     collect.set_defaults(func=_collect)
+
+    live = subparsers.add_parser(
+        "live",
+        parents=[common],
+        help="write a page that updates as you finish plays",
+        description=(
+            "Writes a self-contained HTML file and rewrites it every time a play "
+            "finishes, so a browser left open on a second monitor shows what the "
+            "last play did within a second or two of it ending. Nothing listens on "
+            "a port and nothing is left running when you stop it. A play that leaves "
+            "no replay — a quick retry, or a fail — cannot appear here."
+        ),
+    )
+    live.add_argument("--replays", type=Path, default=None, help="folder of .osr files")
+    live.add_argument("--songs", type=Path, default=None, help="beatmap folder")
+    live.add_argument(
+        "--page",
+        type=Path,
+        default=None,
+        help=f"where to write the page (default: {default_page_path()})",
+    )
+    live.set_defaults(func=_live)
 
     return parser
 

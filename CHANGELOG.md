@@ -79,6 +79,9 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   replays exist and what the timing-relevant settings were, so that sessions and
   a settings history accumulate going forward. An offset estimate is limited by
   how many separate sessions it has, and sessions only accumulate forward.
+- `osuforge.live` and `forge live` — a self-contained page rewritten as plays
+  finish, so a browser left open on a second monitor shows what the last play
+  did a second or two after it ends. No server, no port, nothing listening.
 - `osuforge.analysis.patterns` — where a play's accuracy went, split across the
   kinds of object that cost it. A partition rather than a model: the parts add
   to the whole by construction, and groups are cut within one map at a time so
