@@ -18,6 +18,7 @@ from osuforge.analysis.gain import (
     CONSISTENCY_TOLERANCE,
     MEANINGFUL_GAIN_CHANGE,
     MIN_LANDINGS_PER_REPLAY,
+    MIN_TRAVEL_FOR_GAIN,
     GainSample,
     estimate,
 )
@@ -246,6 +247,62 @@ class TestConsistency:
         assert CONSISTENCY_TOLERANCE < MEANINGFUL_GAIN_CHANGE
 
 
+class TestProportionality:
+    """A gain error is multiplicative, so the ratio of error to distance is the
+    same at every distance. Anything else is a line fitted to a shape."""
+
+    def test_a_real_gain_error_gives_the_same_ratio_in_every_band(self) -> None:
+        result = estimate(corpus(gain_x=1.02, gain_y=1.02), **FAST)
+        assert result.proportionality is not None
+        assert result.proportionality.holds
+        assert result.proportionality.spread < CONSISTENCY_TOLERANCE
+        assert "scales with distance as gain requires" in result.proportionality.summary()
+
+    def test_a_constant_lag_does_not_scale_and_is_refused(self) -> None:
+        # The shape the local corpus actually had: a fixed few pixels behind
+        # the object regardless of how far the jump was. Divided by distance
+        # that is huge at short range and negligible at long, and a straight
+        # line through it has a slope that is not a gain.
+        samples = []
+        for session in range(4):
+            for index in range(3):
+                base = replay(f"s{session}r{index}", session, gain_x=1.0, gain_y=1.0, seed=index)
+                samples.append(
+                    GainSample(
+                        base.replay_id,
+                        session,
+                        [
+                            Landing(
+                                index=0,
+                                time=0,
+                                dx=landing.dx,
+                                dy=landing.dy,
+                                along=landing.along - 3.0,
+                                across=landing.across,
+                                travel=landing.travel,
+                                heading=landing.heading,
+                                sector=landing.sector,
+                                available=landing.available,
+                                peak_speed=landing.peak_speed,
+                                mean_speed=landing.mean_speed,
+                                dwell=landing.dwell,
+                            )
+                            for landing in base.landings
+                        ],
+                    )
+                )
+        result = estimate(samples, **FAST)
+        assert result.proportionality is not None
+        assert not result.proportionality.holds
+        assert not result.usable
+        assert "does not scale with distance" in result.proportionality.summary()
+
+    def test_short_jumps_never_reach_the_fit(self) -> None:
+        result = estimate(corpus(gain_x=1.02, gain_y=1.02), **FAST)
+        assert result.proportionality is not None
+        assert all(low >= MIN_TRAVEL_FOR_GAIN for low, _, _, _ in result.proportionality.bands)
+
+
 class TestCorrection:
     def test_cancelling_an_excess_is_not_the_negated_slope(self) -> None:
         # Cancelling 5% excess needs a factor of 1/1.05, which is -4.76%, not
@@ -310,7 +367,15 @@ class TestReporting:
         assert result.horizontal is not None
         assert result.horizontal.n_sessions == 4
         assert result.horizontal.n_replays == 12
-        assert result.horizontal.n == 12 * 200
+        assert result.horizontal.n + result.skipped_short == 12 * 200
+
+    def test_short_jumps_are_counted_rather_than_dropped_quietly(self) -> None:
+        # They are most of a stream-heavy corpus, so a silent filter here would
+        # be removing the majority of the data without saying so.
+        result = estimate(corpus(gain_x=1.02, gain_y=1.02), **FAST)
+        assert result.skipped_short > 0
+        assert result.horizontal is not None
+        assert result.horizontal.n < 12 * 200
 
     def test_the_estimate_is_stable_across_runs(self) -> None:
         # An interval that moves when nothing else did would be a reason to

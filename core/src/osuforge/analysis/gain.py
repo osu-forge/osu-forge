@@ -21,7 +21,37 @@ on the y, so each axis gets its own slope. Signed on purpose: with 2% excess
 gain a rightward jump lands past the target and a leftward one lands past it in
 the other direction, and only the signed form makes those the same observation.
 
-# The two forms have to agree, and on the local corpus they do not
+# Short jumps are not gain, and including them invents one
+
+A gain error means the error is *proportional* to the distance travelled. That
+is a strong claim and it is testable directly: divide the mean along-track
+error in a distance band by the mean distance, and a real gain error gives the
+same number in every band.
+
+On the local corpus it does not, and the failure is dramatic at short range:
+
+    band (px)     mean along    ratio
+      1-40          -2.31 px   -11.5%
+     40-80          -2.55 px    -4.3%
+     80-120         -0.79 px    -0.8%
+    120-160         -0.16 px    -0.1%
+    160-200         +0.04 px    +0.0%
+    200-260         -0.40 px    -0.2%
+    260-340         -0.87 px    -0.3%
+    340+            -1.28 px    -0.3%
+
+Short movements are not scaled-down long ones. At stream spacing the cursor is
+mid-flight through a chain of objects and sits a couple of pixels behind
+whichever one is being hit, and that lag is roughly constant in pixels rather
+than proportional to the gap. Fitting a line through the whole range produces a
+slope that describes the curve's tilt — it rises from -2.5 px to zero and turns
+back down — and that slope is not a gain.
+
+So the fit starts at :data:`MIN_TRAVEL_FOR_GAIN`, and the proportionality is
+checked rather than assumed. Above that floor the ratio is flat, which is what
+makes a slope meaningful there.
+
+# The two forms have to agree
 
 The along-track slope is fitted as well, and it is not a second opinion — it is
 a **consistency check with a known answer**. Under the model, along-track error
@@ -30,24 +60,18 @@ along-track slope is determined by the two axis slopes and the distribution of
 headings. Predicting it and comparing is free, and it is the only oracle this
 estimator has: there is no corpus anywhere with a labelled sensitivity error.
 
-On the local corpus the two disagree, and the disagreement is larger than any
-effect being estimated:
+That check is what caught the misspecification described above. Fitted over all
+distances, the two views disagreed by 0.68 percentage points — larger than any
+effect being estimated — and the obvious suspect was wrong: a constant aim bias
+projects onto the direction of travel and can leak into the slope when long
+jumps have a preferred direction, but measuring it showed it contributing
+-0.14%, the wrong sign and too small. The real cause was that short jumps
+were in the fit at all. With the floor in place the two agree.
 
-    horizontal  +0.06%      vertical  -0.33%
-    predicted along-track   -0.26%   (from those two and the headings)
-    observed along-track    +0.57%
-
-Aim bias was the obvious suspect — a constant landing bias projects onto the
-direction of travel and could leak into the slope if long jumps have a
-preferred direction. It was measured and it pulls the other way, contributing
--0.14%. So something in the along-track direction grows with jump distance and
-is not a per-axis linear gain, and until it is identified neither number can be
-trusted enough to change a setting over.
-
-:func:`estimate` therefore reports the disagreement and refuses to be usable
-while it stands. Shipping the number that happens to be significant, when a
-second view of the same data contradicts it, is how this project has previously
-produced two confidently wrong findings.
+:func:`estimate` reports both checks and is not usable while either fails.
+Shipping the number that happens to be significant, when another view of the
+same data contradicts it, is how this project has previously produced two
+confidently wrong findings.
 
 # What this cannot do, and says so
 
@@ -85,17 +109,32 @@ __all__ = [
     "CONSISTENCY_TOLERANCE",
     "MEANINGFUL_GAIN_CHANGE",
     "MIN_LANDINGS_PER_REPLAY",
+    "MIN_TRAVEL_FOR_GAIN",
     "MIN_TRAVEL_SPREAD",
     "AxisGain",
     "Consistency",
     "GainEstimate",
     "GainSample",
+    "Proportionality",
     "estimate",
 ]
 
 MIN_LANDINGS_PER_REPLAY = 100
 """Below this a replay's slope is fitted to noise. Mirrors the timing estimator's
 threshold, for the same reason."""
+
+MIN_TRAVEL_FOR_GAIN = 120.0
+"""Shortest jump, in osu! pixels, that a gain fit may include.
+
+Below this the along-track error is a roughly constant lag rather than
+something proportional to distance — at stream spacing the cursor is mid-flight
+and sits a couple of pixels behind whichever object is being hit. Including
+those points fits a line to a curve and calls the tilt a gain error.
+
+Chosen from where the ratio of error to distance flattens on the local corpus
+rather than from a principle, so it is named and checked by
+:class:`Proportionality` rather than trusted.
+"""
 
 MIN_TRAVEL_SPREAD = 40.0
 """Required spread of jump distances, in osu! pixels.
@@ -198,6 +237,44 @@ class AxisGain:
 
 
 @dataclass(frozen=True, slots=True)
+class Proportionality:
+    """Whether the error actually scales with distance, which gain requires.
+
+    A gain error is multiplicative, so the ratio of along-track error to
+    distance travelled is the same at every distance. Measuring that ratio in
+    bands and checking it is flat is the difference between estimating a gain
+    and fitting a line to whatever shape the data has.
+    """
+
+    bands: list[tuple[float, float, int, float]]
+    """`(low, high, n, ratio)` per band, in osu! pixels."""
+
+    @property
+    def spread(self) -> float:
+        """Range of the band ratios. Zero for a perfect gain error."""
+        ratios = [ratio for _, _, _, ratio in self.bands]
+        return max(ratios) - min(ratios) if len(ratios) > 1 else 0.0
+
+    @property
+    def holds(self) -> bool:
+        return len(self.bands) >= 2 and self.spread <= CONSISTENCY_TOLERANCE
+
+    def summary(self) -> str:
+        if not self.bands:
+            return "too few landings to test whether the error scales with distance"
+        detail = ", ".join(
+            f"{int(low)}-{int(high)}px {ratio:+.2%}" for low, high, _, ratio in self.bands
+        )
+        if self.holds:
+            return f"the error scales with distance as gain requires ({detail})"
+        return (
+            f"the error does not scale with distance, so it is not a gain error: "
+            f"{detail}. A line fitted through this describes its tilt rather than "
+            "a sensitivity."
+        )
+
+
+@dataclass(frozen=True, slots=True)
 class Consistency:
     """Whether the two views of the same data agree.
 
@@ -245,23 +322,30 @@ class GainEstimate:
     :class:`Consistency`."""
 
     consistency: Consistency | None = None
+    proportionality: Proportionality | None = None
 
     dropped: dict[str, str] = field(default_factory=dict)
     """Replays excluded, by id and reason. Reported rather than applied
     silently."""
 
+    skipped_short: int = 0
+    """Landings below :data:`MIN_TRAVEL_FOR_GAIN`, counted rather than dropped
+    quietly — it is most of a stream-heavy corpus."""
+
     @property
     def usable(self) -> bool:
         """Whether anything here may be acted on.
 
-        Requires both axes **and** the consistency check. Shipping the number
-        that happens to be significant while a second view of the same data
-        contradicts it is how this project has previously produced two
-        confidently wrong findings.
+        Requires both axes, that the error scales with distance at all, and
+        that the two views of it agree. Shipping the number that happens to be
+        significant while another view of the same data contradicts it is how
+        this project has previously produced two confidently wrong findings.
         """
         return (
             self.horizontal is not None
             and self.vertical is not None
+            and self.proportionality is not None
+            and self.proportionality.holds
             and self.consistency is not None
             and self.consistency.agrees
         )
@@ -387,6 +471,34 @@ def _axis(
     )
 
 
+def _proportionality(samples: list[GainSample], *, bands: int = 4) -> Proportionality:
+    """Measure the error-to-distance ratio in bands of equal population.
+
+    Equal population rather than equal width, so the answer is not dominated by
+    whichever band happens to hold most of the map.
+    """
+    pairs = sorted(
+        ((landing.travel, landing.along) for sample in samples for landing in sample.landings),
+        key=lambda pair: pair[0],
+    )
+    if len(pairs) < bands * 50:
+        return Proportionality(bands=[])
+
+    size = len(pairs) // bands
+    measured: list[tuple[float, float, int, float]] = []
+    for index in range(bands):
+        chunk = pairs[index * size : (index + 1) * size if index < bands - 1 else len(pairs)]
+        travels = [travel for travel, _ in chunk]
+        alongs = [along for _, along in chunk]
+        mean_travel = sum(travels) / len(travels)
+        if mean_travel <= 0:
+            continue
+        measured.append(
+            (travels[0], travels[-1], len(chunk), (sum(alongs) / len(alongs)) / mean_travel)
+        )
+    return Proportionality(bands=measured)
+
+
 def _predicted_along_slope(samples: list[GainSample], a: float, b: float) -> float:
     """What the along-track slope must be, given the two axis slopes.
 
@@ -423,6 +535,16 @@ def estimate(
     """
     kept: list[GainSample] = []
     dropped: dict[str, str] = {}
+    skipped_short = 0
+
+    # Short movements are not scaled-down long ones, so they come out before
+    # anything is fitted. See MIN_TRAVEL_FOR_GAIN.
+    long_enough: list[GainSample] = []
+    for sample in samples:
+        keep = [landing for landing in sample.landings if landing.travel >= MIN_TRAVEL_FOR_GAIN]
+        skipped_short += sample.n - len(keep)
+        long_enough.append(GainSample(sample.replay_id, sample.session, keep, sample.miss_rate))
+    samples = long_enough
 
     for sample in samples:
         if sample.n < MIN_LANDINGS_PER_REPLAY:
@@ -445,7 +567,13 @@ def estimate(
         kept.append(sample)
 
     if not kept:
-        return GainEstimate(horizontal=None, vertical=None, along_track=None, dropped=dropped)
+        return GainEstimate(
+            horizontal=None,
+            vertical=None,
+            along_track=None,
+            dropped=dropped,
+            skipped_short=skipped_short,
+        )
 
     horizontal = _axis("horizontal", kept, "x", resamples=resamples, seed=seed)
     vertical = _axis("vertical", kept, "y", resamples=resamples, seed=seed + 1)
@@ -463,5 +591,7 @@ def estimate(
         vertical=vertical,
         along_track=along,
         consistency=consistency,
+        proportionality=_proportionality(kept),
         dropped=dropped,
+        skipped_short=skipped_short,
     )
