@@ -18,6 +18,34 @@ osu.Game.Rulesets.Osu/Difficulty/Evaluators/
 osu.Game.Rulesets.Osu/Difficulty/Preprocessing/OsuDifficultyHitObject.cs
 ```
 
+## Constants and rules read from upstream
+
+Difficulty calculation has not been ported yet, but the hit simulator already
+takes rules from the same source, and where it does the provenance belongs here
+rather than only in a code comment. Read from `ppy/osu` at `master`, 2026-08-09:
+
+| Taken | Upstream |
+|---|---|
+| `FOLLOW_AREA = 2.4f`, and that it applies only while already tracking | `osu.Game.Rulesets.Osu/Objects/Drawables/DrawableSliderBall.cs`, `SliderInputManager.cs` |
+| Tracking requires the key that hit the head to stay down | `SliderInputManager.cs` |
+| `TAIL_LENIENCY = -36`, `minDistanceFromEnd = velocity * 10`, reversed-span time progress | `osu.Game/Rulesets/Objects/SliderEventGenerator.cs` |
+| `STACK_DISTANCE = 3`, the format-6 version gate, `(int)TimePreempt * StackLeniency` | `osu.Game.Rulesets.Osu/Beatmaps/OsuBeatmapProcessor.cs` |
+| Slider scoring is proportional to parts collected; note lock covers the full hit window | `osu.Game.Rulesets.Osu/Mods/OsuModClassic.cs` |
+
+### Where stable and lazer differ
+
+`ppy/osu` is lazer. stable's source has never been published, so lazer is
+evidence about stable only where it deliberately reproduces it — the `Legacy*`
+constants and `OsuModClassic` exist for exactly that reason. Two places where it
+does not, found by comparing against a real replay corpus:
+
+- `HitWindows.ResultFor` compares **inclusively** in lazer. The replay headers
+  say stable is strict: across 318 circle hits landing exactly on a window edge,
+  `<` leaves the corpus 65 objects over on 300s and `<=` leaves it 358 over.
+- lazer's windows are raw doubles; stable's are integers.
+
+Where the two disagree, the corpus decides, because stable is what produced it.
+
 ## Keeping this current
 
 pp gets reworked. When it does, an implementation that is not re-ported goes quietly

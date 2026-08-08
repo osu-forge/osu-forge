@@ -50,14 +50,41 @@ than hidden:
    window opens is discarded rather than passed to a later object. That is the
    behaviour notelock produces, but stable's implementation releases the lock on
    an object's end time, which is not obviously the same rule in every case.
-3. **The follow circle.** Taken as 2.4 times the object radius, which is what
-   the community documents. Each part of a slider is tested independently, so a
-   player who leaves the follow circle and returns collects what follows. stable
-   may end tracking on the first release instead.
+3. **Tracking is sampled at the parts, not continuously.** osu! evaluates
+   tracking every frame; this evaluates it only where a part is judged. A cursor
+   that leaves the follow circle and returns between two ticks keeps the wide
+   radius here and would have lost it in the game.
+
+   This is the largest known gap, and it is measurable: the simulation collects
+   every part on about 283 more sliders than the game does, out of 15,359. The
+   fix needs the ball's position at arbitrary times, which means exposing the
+   slider path through the bindings rather than only its scoring points.
 4. **When a part is judged.** The game checks a tick on the update its clock
    passes the tick's time, so the cursor position used here is the one on the
    first frame at or after it — not an interpolation, which would be smoother
    than the game and therefore wrong in the player's favour.
+5. **A hit slider head keeps blocking.** ppy's own note, in the description of
+   the classic mod: on stable, a slider head that has already been hit blocks
+   input from reaching objects underneath it until the slider is fully judged.
+   Not implemented — here the head stops blocking as soon as it is hit.
+
+# What was read rather than reconstructed
+
+The slider rules above were first reconstructed from documentation and then
+checked against ppy/osu, which is MIT-licensed and is the authority for this.
+Doing it in that order was a mistake worth recording, because the reconstruction
+had a constant fitted to the corpus that turned out to be wrong: the follow
+circle was set to 2.0 because at 2.4 the simulation produced 400 too many 300s,
+and the real answer was that `FOLLOW_AREA` is 2.4 and tracking is a state
+machine. Acquiring it needs the cursor within the object's own radius; only
+keeping it allows the wider one, and only while the key that hit the head stays
+down. The fit was good and the model was wrong, which is the argument against
+fitted constants in general.
+
+Two divergences between stable and lazer showed up in the process. lazer's
+`HitWindows.ResultFor` compares inclusively; the replay headers say stable is
+strict. And lazer's windows are raw doubles where stable's are integers. Where
+the two disagree, the corpus decides, because it is stable that produced it.
 
 Both are decided empirically by how well the simulation reproduces the header
 counts, which is the only evidence available without the game's source.
@@ -96,7 +123,7 @@ from enum import IntEnum
 import osu_forge_diffcalc as diffcalc
 
 from osuforge.replay.frames import Button, NormalizedFrames, normalize
-from osuforge.replay.model import Replay
+from osuforge.replay.model import Keys, Replay
 
 __all__ = [
     "BREAK_MS",
@@ -121,22 +148,22 @@ The cursor is wherever the spin left it and the hand is still recovering, so
 these errors are not comparable with the rest.
 """
 
-FOLLOW_CIRCLE_SCALE = 2.0
+FOLLOW_CIRCLE_SCALE = 2.4
 """The follow circle's radius, as a multiple of the object radius.
 
-While a key is held, a slider keeps collecting as long as the cursor stays
-inside this.
+`DrawableSliderBall.FOLLOW_AREA` in ppy/osu, read rather than inferred.
 
-The community documents 2.4. This is 2.0 because that is what a real corpus
-says: the number of sliders scoring 300 depends on this and on nothing else, and
-swept across 15,359 sliders it crosses the game's own count at about 1.96. At
-2.4 the simulation produces 400 too many 300s (2.6%); at 2.0, 65 (0.42%).
+It applies only while already tracking. Acquiring tracking needs the cursor
+inside the object's own radius; `SliderInputManager` calls
+`IsMouseInFollowArea(Tracking)` and expands the radius only when that is
+already true.
 
-Two caveats, because a constant fitted to the data used to check the model is
-not the same as a measured one. It may be absorbing some other error — a tick
-generated where the game generates none would show up the same way. And the
-validation in :mod:`osuforge.replay.validate` deliberately does not rest on
-slider grades, so this figure is not propping up its own evidence.
+This was 2.0 for a while, fitted to the corpus because at 2.4 the simulation
+produced 400 too many 300s. The fitted value was wrong and the sweep was
+measuring a compensating error: the model tested every part independently at the
+wide radius, which is too generous, and shrinking the radius hid it. Reading the
+source found the state machine instead. Worth remembering as an argument against
+calibrated constants generally — the fit was good and the model was wrong.
 """
 
 
@@ -341,15 +368,19 @@ class _FrameSampler:
             times.append(highest)
         self._times = times
 
-    def following(self, time: float, x: float, y: float, follow_squared: float) -> bool:
-        """Whether a key was held with the cursor inside the follow circle."""
+    def at(self, time: float, required: int) -> tuple[float, float, bool] | None:
+        """Cursor position and whether a qualifying key was held, at `time`.
+
+        `required` is the judgement bit that has to be set — the one belonging to
+        the key that hit the slider's head. osu! only tracks while *that* key is
+        held, so a player alternating through a stream drops the slider even
+        though a key is down the whole time. Pass the full mask to accept any.
+        """
         index = bisect.bisect_left(self._times, time)
         if index >= len(self._frames):
-            return False
+            return None
         frame = self._frames[index]
-        if not frame.keys.judgement_mask:
-            return False
-        return (frame.x - x) ** 2 + (frame.y - y) ** 2 <= follow_squared
+        return (frame.x, frame.y, bool(frame.keys.judgement_mask & required))
 
 
 def _grade_for(magnitude: int, windows: tuple[int, int, int]) -> Grade:
@@ -500,7 +531,16 @@ def simulate(replay: Replay, beatmap: diffcalc.Beatmap) -> Simulation:
 
     sampler = _FrameSampler(frames)
     hits = [
-        _judge(index, obj, heads[index], reasons[index], windows, sampler, follow_squared)
+        _judge(
+            index,
+            obj,
+            heads[index],
+            reasons[index],
+            windows,
+            sampler,
+            radius_squared,
+            follow_squared,
+        )
         for index, obj in enumerate(objects)
     ]
 
@@ -523,6 +563,7 @@ def _judge(
     excluded: str | None,
     windows: tuple[int, int, int],
     sampler: _FrameSampler,
+    radius_squared: float,
     follow_squared: float,
 ) -> Hit:
     """Turn one object's head outcome into its final grade."""
@@ -543,8 +584,29 @@ def _judge(
         # The head is one scoring part among several, and a slider whose head
         # was missed still scores off ticks collected while sliding through it.
         collected = 1 if head.hit else 0
+        # Tracking is a state machine, not a per-part test. The follow circle
+        # only applies once you are already following: acquiring tracking needs
+        # the cursor inside the object's own radius, and keeping it allows the
+        # wider one. Testing every part independently at the wide radius is too
+        # generous, and ending the slider at the first part missed is too harsh —
+        # measured on a real corpus, those give 400 too many 300s and 293 too
+        # many misses respectively.
+        # Which key has to stay down. When the head was hit, it is the key that
+        # hit it; when it was not, any key can acquire tracking.
+        required = int(Keys.M1 | Keys.M2)
+        if head.button is not None:
+            required = int(Keys.M1 if head.button.side == "left" else Keys.M2)
+
+        tracking = head.hit
         for part in obj.parts:
-            if sampler.following(part.time, part.x, part.y, follow_squared):
+            sample = sampler.at(part.time, required)
+            if sample is None:
+                tracking = False
+                continue
+            x, y, held = sample
+            limit = follow_squared if tracking else radius_squared
+            tracking = held and (x - part.x) ** 2 + (y - part.y) ** 2 <= limit
+            if tracking:
                 collected += 1
         grade = _slider_grade(collected, 1 + len(obj.parts))
     elif head.hit and head.error is not None:
