@@ -14,6 +14,13 @@ MODS: dict[str, int]
 keeps its own copy for the `.osr` header, and a test asserts the two agree."""
 
 STACK_DISTANCE: float
+
+PATH_SPACING: float
+"""Distance in osu! pixels between consecutive points of `HitObject.path`."""
+
+PLAYFIELD_HEIGHT: float
+"""Playfield height in osu! pixels. The axis Hard Rock reflects about."""
+
 VERSION: str
 
 class BeatmapError(Exception):
@@ -83,6 +90,18 @@ class HitObject:
     @property
     def parts(self) -> list[SliderPart]:
         """Ticks, repeats and the tail, in time order. Empty for a non-slider."""
+
+    @property
+    def slides(self) -> int:
+        """Traversals of the path. 1 means no repeat. 0 for a non-slider."""
+
+    @property
+    def path(self) -> list[float]:
+        """The slider body as `[x0, y0, x1, y1, ...]`, `PATH_SPACING` apart.
+
+        Trimmed to the file's declared length and stack-offset like the head,
+        so these are the pixels the player saw. Empty for a non-slider.
+        """
 
 @final
 class Beatmap:

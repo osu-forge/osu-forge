@@ -14,6 +14,8 @@ enters Python would be the worst possible place to lose types.
 
 from ._native import (
     MODS,
+    PATH_SPACING,
+    PLAYFIELD_HEIGHT,
     STACK_DISTANCE,
     VERSION,
     Beatmap,
@@ -26,6 +28,8 @@ from ._native import (
 
 __all__ = [
     "MODS",
+    "PATH_SPACING",
+    "PLAYFIELD_HEIGHT",
     "STACK_DISTANCE",
     "VERSION",
     "Beatmap",

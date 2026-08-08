@@ -10,6 +10,7 @@ that comes across matches the formulas the analysis side reasons with.
 from __future__ import annotations
 
 import math
+from itertools import pairwise
 
 import osu_forge_diffcalc as diffcalc
 import pytest
@@ -130,6 +131,86 @@ class TestGeometry:
         second = beatmap().objects[1]
         assert second.stack_height == 0
         assert (second.x, second.y) == (second.raw_x, second.raw_y)
+
+
+class TestSliderPath:
+    """The body, not the control points.
+
+    A caller that draws the raw control-point geometry draws a slider a median
+    6-11% too long — Linear worst at +11.4% — because osu! trims the path to the
+    length the file declares rather than to what the geometry measures. What
+    crosses the boundary is already trimmed, so there is no second place for
+    that rule to be re-implemented and get it wrong.
+    """
+
+    def points(self, obj: diffcalc.HitObject) -> list[tuple[float, float]]:
+        flat = obj.path
+        return list(zip(flat[::2], flat[1::2], strict=True))
+
+    def slider(self, text: str = MINIMAL) -> diffcalc.HitObject:
+        return next(o for o in beatmap(text).objects if o.kind == diffcalc.ObjectKind.Slider)
+
+    def walked(self, obj: diffcalc.HitObject) -> float:
+        return sum(math.dist(a, b) for a, b in pairwise(self.points(obj)))
+
+    def test_the_body_is_the_declared_length_not_the_geometry(self) -> None:
+        # 200,200 -> 300,200 is 100 px of geometry and the file declares 100.
+        assert self.walked(self.slider()) == pytest.approx(100.0, rel=0.01)
+
+    def test_a_declared_length_shorter_than_the_geometry_wins(self) -> None:
+        short = MINIMAL.replace(
+            "200,200,2000,2,0,L|300:200,1,100", "200,200,2000,2,0,L|300:200,1,60"
+        )
+        obj = self.slider(short)
+        assert self.walked(obj) == pytest.approx(60.0, rel=0.01), "the file beats the geometry"
+        assert self.points(obj)[-1][0] == pytest.approx(260.0)
+
+    def test_the_body_starts_at_the_head(self) -> None:
+        obj = self.slider()
+        assert self.points(obj)[0] == pytest.approx((obj.x, obj.y))
+
+    def test_the_spacing_is_what_the_module_says_it_is(self) -> None:
+        gaps = [math.dist(a, b) for a, b in pairwise(self.points(self.slider()))]
+        assert max(gaps) <= diffcalc.PATH_SPACING + 1e-9
+        # The last gap may be shorter, so that the body ends exactly on the tail
+        # rather than stopping short of it.
+        assert all(g == pytest.approx(diffcalc.PATH_SPACING) for g in gaps[:-1])
+
+    def test_a_stacked_slider_keeps_its_body_attached_to_its_head(self) -> None:
+        # Stacking moves the whole slider. Applying the offset to the head and
+        # not to the path detaches the body by a few pixels on exactly the
+        # patterns a player is most likely to be asking about.
+        # A slider stacks when a later object starts where it ends, so this is
+        # a chain rather than a pile: the first slider ends at 300,200 and the
+        # second starts there, which lifts the first by one level.
+        stacked = (
+            "osu file format v14\n"
+            "[General]\nMode: 0\nStackLeniency: 0.7\n"
+            "[Difficulty]\nCircleSize:4\nApproachRate:9\nSliderMultiplier:1.4\n"
+            "[TimingPoints]\n0,500,4,2,0,100,1,0\n"
+            "[HitObjects]\n"
+            "200,200,1000,2,0,L|300:200,1,100\n"
+            "300,200,1200,2,0,L|400:200,1,100\n"
+        )
+        lifted = beatmap(stacked).objects[0]
+        assert lifted.stack_height == 1, "the fixture should stack"
+
+        head = self.points(lifted)[0]
+        assert head == pytest.approx((lifted.x, lifted.y)), "body starts at the drawn head"
+        assert head != pytest.approx((lifted.raw_x, lifted.raw_y)), "which is not the file's"
+
+    def test_slides_comes_across(self) -> None:
+        repeated = MINIMAL.replace(
+            "200,200,2000,2,0,L|300:200,1,100", "200,200,2000,2,0,L|300:200,3,100"
+        )
+        assert self.slider(repeated).slides == 3
+        assert self.slider().slides == 1
+
+    def test_non_sliders_carry_neither(self) -> None:
+        for obj in beatmap().objects:
+            if obj.kind != diffcalc.ObjectKind.Slider:
+                assert obj.path == []
+                assert obj.slides == 0
 
 
 class TestMods:

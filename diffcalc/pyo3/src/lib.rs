@@ -17,7 +17,9 @@
 // targets. Silenced here rather than by loosening `-D warnings` in CI.
 #![allow(linker_messages)]
 
-use osu_forge_diffcalc::beatmap::{self, HitObjectKind, NestedKind, Stacking};
+use osu_forge_diffcalc::beatmap::{
+    self, HitObjectKind, NestedKind, SliderPath, Stacking, STACK_OFFSET_PER_LEVEL,
+};
 use osu_forge_diffcalc::mods::Mods;
 use pyo3::create_exception;
 use pyo3::exceptions::PyException;
@@ -30,6 +32,16 @@ create_exception!(
     PyException,
     "A `.osu` file could not be read."
 );
+
+/// Distance between consecutive points of an exported slider body, in osu!
+/// pixels.
+///
+/// Five keeps a tight arc smooth at any zoom a report uses while costing about
+/// 80 bytes per hundred pixels of slider. The alternative — handing over the
+/// control points and re-implementing Bézier flattening, arc-length
+/// parameterisation and the declared-length rule on the far side — is a second
+/// copy of the geometry that would drift from this one.
+const PATH_SPACING: f64 = 5.0;
 
 /// What kind of object this is, as far as judgement is concerned.
 ///
@@ -104,6 +116,24 @@ pub struct HitObject {
     /// Ticks, repeat points and the tail, in time order. Empty for anything
     /// that is not a slider.
     pub parts: Vec<SliderPart>,
+
+    /// How many times the ball traverses the path. 1 means no repeat, so this
+    /// is not a repeat count. 0 for anything that is not a slider.
+    pub slides: i32,
+
+    /// The slider body, as `[x0, y0, x1, y1, ...]` about
+    /// [`PATH_SPACING`](constant.PATH_SPACING.html) osu! pixels apart. Empty
+    /// for anything that is not a slider.
+    ///
+    /// Flat rather than a list of pairs because this crosses the boundary once
+    /// per slider and a map has thousands of them: 1,600 pairs cost 1,600
+    /// Python tuples, and the consumer is a renderer that wants a contiguous
+    /// buffer anyway.
+    ///
+    /// Trimmed to the file's declared length and stack-offset like the head, so
+    /// these are the pixels the player saw. The raw control-point geometry runs
+    /// 6–11% longer and is not exposed.
+    pub path: Vec<f64>,
 }
 
 #[pymethods]
@@ -154,6 +184,25 @@ fn build_objects(py: Python<'_>, map: &beatmap::Beatmap) -> PyResult<Py<PyList>>
                 },
             })
             .collect();
+        let (slides, path) = match &object.kind {
+            // Stacking moves the whole slider, path included, not just its
+            // head — the same offset `slider_parts` applies to ticks and the
+            // tail. Leaving it off would draw the body detached from the head
+            // by a few pixels on exactly the stacked patterns where a player
+            // is most likely to be asking what went wrong.
+            HitObjectKind::Slider(slider) => {
+                let offset = f64::from(object.stack_height) * scale * -STACK_OFFSET_PER_LEVEL;
+                let mut flat = Vec::with_capacity(0);
+                let sampled = SliderPath::new(slider).resample(PATH_SPACING);
+                flat.reserve_exact(sampled.len() * 2);
+                for point in sampled {
+                    flat.push(point.x + offset);
+                    flat.push(point.y + offset);
+                }
+                (slider.slides, flat)
+            }
+            _ => (0, Vec::new()),
+        };
         items.push(Py::new(
             py,
             HitObject {
@@ -167,6 +216,8 @@ fn build_objects(py: Python<'_>, map: &beatmap::Beatmap) -> PyResult<Py<PyList>>
                 new_combo: object.new_combo,
                 stack_height: object.stack_height,
                 parts,
+                slides,
+                path,
             },
         )?);
     }
@@ -442,6 +493,8 @@ fn _native(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add("BeatmapError", py.get_type::<BeatmapError>())?;
     m.add("MODS", mod_table(py)?)?;
     m.add("STACK_DISTANCE", beatmap::STACK_DISTANCE)?;
+    m.add("PATH_SPACING", PATH_SPACING)?;
+    m.add("PLAYFIELD_HEIGHT", beatmap::PLAYFIELD_HEIGHT)?;
     m.add("VERSION", osu_forge_diffcalc::VERSION)?;
     Ok(())
 }
