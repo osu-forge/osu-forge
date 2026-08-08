@@ -18,6 +18,15 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 - `osuforge.config` — read-only `osu!.<user>.cfg` parser with a byte-exact
   round trip, credential redaction applied at the parser boundary, config
   discovery, and locale-invariant typed accessors.
+- `osuforge.config.keybinds` — ruleset-aware conflict detection. Two bindings
+  conflict only when they are live in an overlapping context, so the four
+  apparent collisions in a real config resolve to the one that is real.
+- `osuforge.probes.base` — the `ProbeResult` contract. Probes return failure as
+  a value and never raise into the rule engine.
+- `osuforge.rules` — declarative rule engine plus the first five rules, all
+  config-only so they run with no probes, no elevation, and osu! not running.
+  A rule whose probe is unavailable emits a visible skip rather than vanishing,
+  and a rule that raises costs its own finding rather than the whole report.
 
 ### Fixed
 - The Python license gate reported success when `pip-licenses` had failed and
