@@ -15,6 +15,7 @@ from osuforge.config import (
     ConfigNotFoundError,
     EntryLine,
     OsuConfig,
+    RedactionPolicy,
     UnknownLine,
     find_config,
     find_install_dir,
@@ -152,6 +153,16 @@ class TestRoundTrip:
         assert cfg.get_str("Offset") == "0"
         assert cfg.dump() == data
 
+    def test_a_key_named_pass_is_redacted_not_round_tripped(self) -> None:
+        # Found by the property test below, which generated a key literally
+        # named PASS. The redaction pattern is case-insensitive and matches
+        # substrings, so this is correct behaviour — a config key that looks
+        # like a credential is treated as one. It is also precisely why the
+        # property below has to exclude credential-matching keys: byte-exact
+        # round-tripping and redaction are mutually exclusive by design.
+        cfg = OsuConfig.parse(b"PASS = hunter2\r\n")
+        assert cfg.dump() == b"PASS = <redacted>\r\n"
+
     @settings(max_examples=200)
     @given(
         lines=st.lists(
@@ -165,7 +176,7 @@ class TestRoundTrip:
                         ),
                         min_size=1,
                         max_size=20,
-                    ),
+                    ).filter(lambda key: not RedactionPolicy().should_redact(key)),
                     st.text(
                         alphabet=st.characters(
                             blacklist_categories=("Cs",), blacklist_characters="\r\n"
@@ -186,6 +197,9 @@ class TestRoundTrip:
         eol=st.sampled_from(["\r\n", "\n", "\r"]),
     )
     def test_arbitrary_config_round_trips(self, lines: list[str], eol: str) -> None:
+        # Credential-matching keys are filtered out of the generated keys above:
+        # those are rewritten on purpose, so the byte-exactness property does not
+        # apply to them. See test_a_key_named_pass_is_redacted_not_round_tripped.
         data = (eol.join(lines) + (eol if lines else "")).encode("utf-8")
         assert OsuConfig.parse(data).dump() == data
 
