@@ -15,6 +15,7 @@ from pathlib import Path
 import pytest
 
 from osuforge.cli import _build_parser, main
+from osuforge.collect.journal import default_journal_path
 
 from .fixtures import REALISTIC_CFG, SENTINEL_PASSWORD, SENTINEL_TOKEN
 
@@ -157,24 +158,75 @@ class TestNoCredentialReachesAnyStream:
 
 
 class TestAdvisoryOnly:
-    def test_there_is_no_command_that_writes(self) -> None:
+    def test_there_is_no_command_that_writes_osu_files(self) -> None:
         # "Advisory only" is expressed as a missing capability, so assert the
-        # capability is actually missing rather than trusting a convention.
+        # capability is actually missing rather than trusting a convention. The
+        # exact set is deliberate: adding a command has to be a decision someone
+        # made on purpose rather than something that slips in.
         parser = _build_parser()
         subparsers = next(
             action for action in parser._actions if hasattr(action, "choices") and action.choices
         )
         commands = set(subparsers.choices)  # type: ignore[arg-type]
-        assert commands == {"doctor", "scan"}
+        assert commands == {"doctor", "scan", "collect"}
         assert not commands & {"apply", "fix", "write", "set", "install", "repair"}
 
     def test_the_config_file_is_untouched_by_a_full_run(
-        self, config_path: Path, capsys: pytest.CaptureFixture[str]
+        self, config_path: Path, capsys: pytest.CaptureFixture[str], tmp_path: Path
     ) -> None:
         before = config_path.read_bytes()
         _run(["doctor", "--config", str(config_path)], capsys)
         _run(["scan", "--config", str(config_path)], capsys)
+
+        # `collect` writes a journal, which makes it the one command that writes
+        # anything at all. It must still leave everything belonging to osu!
+        # exactly as it was.
+        replays = tmp_path / "r"
+        replays.mkdir()
+        _run(
+            [
+                "collect",
+                "--config",
+                str(config_path),
+                "--replays",
+                str(replays),
+                "--journal",
+                str(tmp_path / "journal.jsonl"),
+            ],
+            capsys,
+        )
         assert config_path.read_bytes() == before
+
+    def test_the_journal_never_defaults_inside_the_osu_install(self) -> None:
+        # The journal is the only file this tool creates. It belongs beside the
+        # tool's own data, never in a directory the game owns and rewrites.
+        assert "osu!" not in str(default_journal_path())
+
+    def test_collect_leaks_no_credential(
+        self, config_path: Path, capsys: pytest.CaptureFixture[str], tmp_path: Path
+    ) -> None:
+        # `collect` reads the configuration to fingerprint it, so it is a path a
+        # credential could travel down that the other commands do not have.
+        replays = tmp_path / "r"
+        replays.mkdir()
+        journal = tmp_path / "journal.jsonl"
+        _, out, err = _run(
+            [
+                "collect",
+                "--json",
+                "--config",
+                str(config_path),
+                "--replays",
+                str(replays),
+                "--journal",
+                str(journal),
+            ],
+            capsys,
+        )
+        combined = out + err + (journal.read_text("utf-8") if journal.exists() else "")
+        assert combined, "the command produced no output, so this proves nothing"
+        for sentinel in (SENTINEL_PASSWORD, SENTINEL_TOKEN):
+            assert sentinel not in combined
 
 
 class TestParser:

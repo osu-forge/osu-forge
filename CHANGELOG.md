@@ -69,6 +69,10 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 - `osuforge.replay.validate` — the screen that decides whether to believe a
   simulation, and the circuit breaker that withholds any recommendation from a
   corpus it does not.
+- `osuforge.collect` and `forge collect` — an append-only record of which
+  replays exist and what the timing-relevant settings were, so that sessions and
+  a settings history accumulate going forward. An offset estimate is limited by
+  how many separate sessions it has, and sessions only accumulate forward.
 - `osuforge.analysis.clustering` — a mean and an interval that account for hits
   being nested in replays and replays in sessions, reporting the effective
   sample size rather than the raw one. On the local corpus that is 893

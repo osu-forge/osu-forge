@@ -21,6 +21,8 @@ from pathlib import Path
 from typing import Any, TextIO
 
 from osuforge import __version__
+from osuforge.collect.epoch import ConfigEpoch
+from osuforge.collect.journal import Journal, default_journal_path, scan
 from osuforge.config import ConfigNotFoundError, OsuConfig, find_config
 from osuforge.models import Basis, Finding, Severity
 from osuforge.probes.base import ProbeResult
@@ -164,6 +166,61 @@ def _doctor(args: argparse.Namespace) -> int:
     return 0
 
 
+def _collect(args: argparse.Namespace) -> int:
+    try:
+        config_path = find_config(args.config)
+    except ConfigNotFoundError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
+
+    config = OsuConfig.from_path(config_path)
+    epoch = ConfigEpoch.of(config)
+    replay_dir = args.replays or config_path.parent / "Data" / "r"
+    if not replay_dir.is_dir():
+        print(f"error: no replay folder at {replay_dir}", file=sys.stderr)
+        return 2
+
+    journal = Journal(args.journal or default_journal_path())
+    result = scan(replay_dir, epoch, journal)
+
+    if args.json:
+        print(
+            json.dumps(
+                {
+                    "schema_version": 1,
+                    "journal": str(journal.path),
+                    "epoch": epoch.digest,
+                    "epoch_changed": result.epoch_changed,
+                    "settings": epoch.settings,
+                    "added": [dataclasses.asdict(entry) for entry in result.added],
+                    "already_known": result.already_known,
+                    "unreadable": result.unreadable,
+                },
+                indent=2,
+            )
+        )
+        return 0
+
+    out = sys.stderr
+    print(f"journal: {journal.path}", file=out)
+    print(result.summary(), file=out)
+    if result.epoch_changed:
+        # The whole reason the fingerprint exists. A change means earlier
+        # replays describe a different configuration, and pooling across it
+        # would average two answers into one that is neither.
+        print(
+            "\nTiming-relevant settings changed since the last run. Replays before and "
+            "after this point measure different configurations and are not pooled.",
+            file=out,
+        )
+    for name, reason in list(result.unreadable.items())[:5]:
+        print(f"  unreadable: {name}: {reason}", file=out)
+    if not result.added:
+        print("\nNothing new. Run this after playing; it is what accumulates the", file=out)
+        print("sessions an offset estimate is actually limited by.", file=out)
+    return 0
+
+
 def _scan(args: argparse.Namespace) -> int:
     try:
         config_path = find_config(args.config)
@@ -252,6 +309,32 @@ def _build_parser() -> argparse.ArgumentParser:
         "scan", parents=[common], help="show what was found, without analysing it"
     )
     scan.set_defaults(func=_scan)
+
+    collect = subparsers.add_parser(
+        "collect",
+        parents=[common],
+        help="record new replays and the settings in force, so sessions accumulate",
+        description=(
+            "Appends any replay not already recorded, together with a fingerprint of "
+            "the settings that affect timing. Run it after playing. An offset estimate "
+            "is limited by how many separate sessions it has, not by how many hits, and "
+            "sessions only accumulate forward. Reads nothing but files and does not stay "
+            "running."
+        ),
+    )
+    collect.add_argument(
+        "--replays",
+        type=Path,
+        default=None,
+        help="folder of .osr files (default: Data/r beside the config)",
+    )
+    collect.add_argument(
+        "--journal",
+        type=Path,
+        default=None,
+        help=f"where to append (default: {default_journal_path()})",
+    )
+    collect.set_defaults(func=_collect)
 
     return parser
 
