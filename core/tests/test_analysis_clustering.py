@@ -215,8 +215,17 @@ class TestDegenerate:
 
 
 class TestInclusion:
-    def sample(self, replay_id: str, *, hits: int, miss_rate: float = 0.0) -> ReplaySample:
-        return ReplaySample(replay_id, 0, [1.0] * hits, miss_rate=miss_rate)
+    def sample(
+        self,
+        replay_id: str,
+        *,
+        hits: int,
+        miss_rate: float = 0.0,
+        local_offset: int = 0,
+    ) -> ReplaySample:
+        return ReplaySample(
+            replay_id, 0, [1.0] * hits, miss_rate=miss_rate, local_offset=local_offset
+        )
 
     def test_a_short_replay_is_excluded_with_a_reason(self) -> None:
         result = select([self.sample("short", hits=MIN_HITS_PER_REPLAY - 1)])
@@ -231,6 +240,28 @@ class TestInclusion:
         result = select([self.sample("sloppy", hits=500, miss_rate=MAX_MISS_RATE + 0.01)])
         assert result.kept == []
         assert "truncated sample" in result.dropped["sloppy"]
+
+    def test_a_map_with_its_own_offset_is_excluded_rather_than_corrected(self) -> None:
+        # Correcting needs the sign convention, and every beatmap in the local
+        # corpus has an offset of zero, so there is nothing to establish it
+        # against. A correction applied backwards doubles the error it was meant
+        # to remove and nothing downstream would notice.
+        result = select([self.sample("shifted", hits=500, local_offset=-20)])
+        assert result.kept == []
+        assert "-20 ms" in result.dropped["shifted"]
+        assert "different scale" in result.dropped["shifted"]
+
+    def test_the_offset_exclusion_is_counted_like_any_other(self) -> None:
+        result = select(
+            [self.sample("plain", hits=500), self.sample("shifted", hits=500, local_offset=8)]
+        )
+        assert [s.replay_id for s in result.kept] == ["plain"]
+        assert "1 local offset" in result.summary()
+
+    def test_a_zero_offset_changes_nothing(self) -> None:
+        # Zero is what the reader reports when it cannot read osu!.db at all,
+        # so this is also the path taken when the offsets are simply unknown.
+        assert len(select([self.sample("plain", hits=500, local_offset=0)]).kept) == 1
 
     def test_a_clean_replay_is_kept(self) -> None:
         result = select([self.sample("good", hits=500, miss_rate=0.01)])

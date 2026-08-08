@@ -116,6 +116,19 @@ class ReplaySample:
     statistic about the play. See :data:`MAX_MISS_RATE`.
     """
 
+    local_offset: int = 0
+    """The beatmap's own offset in milliseconds, from `osu!.db`.
+
+    A player can set a per-map offset in game with `+`/`-`, and it shifts when
+    that map's objects are judged. A replay of a map carrying one produces hit
+    errors on a different scale from a replay of a map without, and pooling the
+    two averages quantities that are not the same quantity.
+
+    Zero is the default because zero is what the reader reports when it cannot
+    read the file, and assuming no offset is the direction that does not invent
+    a correction. Non-zero excludes the replay — see :func:`select`.
+    """
+
     @property
     def n(self) -> int:
         return len(self.errors)
@@ -251,7 +264,18 @@ def select(samples: list[ReplaySample]) -> Inclusion:
     kept: list[ReplaySample] = []
     dropped: dict[str, str] = {}
     for sample in samples:
-        if sample.n < MIN_HITS_PER_REPLAY:
+        if sample.local_offset:
+            # Excluded rather than corrected. Correcting needs the sign
+            # convention — whether osu! shifts the objects later or the audio
+            # earlier — and every beatmap in the local corpus has an offset of
+            # zero, so there is nothing here to establish it against. A
+            # correction applied with the sign backwards doubles the error it
+            # was meant to remove, and nothing downstream would notice.
+            dropped[sample.replay_id] = (
+                f"local offset: the beatmap carries {sample.local_offset:+d} ms, so its "
+                "hit errors are on a different scale from the rest"
+            )
+        elif sample.n < MIN_HITS_PER_REPLAY:
             dropped[sample.replay_id] = f"too few hits: {sample.n} < {MIN_HITS_PER_REPLAY}"
         elif sample.miss_rate > MAX_MISS_RATE:
             dropped[sample.replay_id] = (
