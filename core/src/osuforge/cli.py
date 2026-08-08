@@ -21,10 +21,11 @@ from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any, TextIO
 
-from osuforge import __version__
+from osuforge import __version__, hardware
 from osuforge.collect.epoch import ConfigEpoch
 from osuforge.collect.journal import Journal, default_journal_path, scan
 from osuforge.config import ConfigNotFoundError, OsuConfig, find_config
+from osuforge.hardware import default_profile_path
 from osuforge.live.render import REFRESH_SECONDS, render
 from osuforge.live.watch import POLL_SECONDS, BeatmapIndex, Session, analyse, default_page_path
 from osuforge.models import Basis, Finding, Severity
@@ -339,6 +340,128 @@ def _scan(args: argparse.Namespace) -> int:
     return 0
 
 
+def _profile(args: argparse.Namespace) -> int:
+    """Show or set the hardware facts that no file records."""
+    path = args.path
+
+    if args.dpi is not None and (args.dpi_x is not None or args.dpi_y is not None):
+        print("error: --dpi sets both axes; use --dpi-x and --dpi-y instead", file=sys.stderr)
+        return 2
+    if (args.dpi_x is None) != (args.dpi_y is None):
+        # Refused rather than defaulted. Filling the missing axis from the given
+        # one would silently record isotropy that was never claimed, and the
+        # whole reason the axes are separate is that assuming they match is the
+        # mistake.
+        print("error: --dpi-x and --dpi-y must be given together", file=sys.stderr)
+        return 2
+
+    try:
+        current = hardware.load(path)
+    except hardware.ProfileError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
+
+    tracking_given = (
+        args.asymmetric_cutoff is not None
+        or args.lift_off_mm is not None
+        or args.landing_mm is not None
+        or args.cutoff_label is not None
+    )
+    if args.asymmetric_cutoff is not None and (
+        args.lift_off_mm is not None or args.landing_mm is not None
+    ):
+        print("error: --asymmetric-cutoff already sets both distances", file=sys.stderr)
+        return 2
+
+    if args.dpi is not None or args.dpi_x is not None or tracking_given:
+        try:
+            pointer = current.pointer
+            if args.dpi is not None or args.dpi_x is not None:
+                dpi_x = args.dpi if args.dpi is not None else args.dpi_x
+                dpi_y = args.dpi if args.dpi is not None else args.dpi_y
+                pointer = hardware.Mouse(dpi_x=dpi_x, dpi_y=dpi_y)
+
+            tracking = current.tracking
+            if args.asymmetric_cutoff is not None:
+                tracking = hardware.Tracking.asymmetric(args.asymmetric_cutoff)
+            elif tracking_given:
+                tracking = hardware.Tracking(
+                    landing_mm=args.landing_mm,
+                    lift_off_mm=args.lift_off_mm,
+                    label=args.cutoff_label or "",
+                )
+
+            current = hardware.Profile(pointer=pointer, tracking=tracking)
+            written = hardware.save(current, path)
+        except hardware.ProfileError as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return 2
+        print(f"saved: {written}", file=sys.stderr)
+
+    mouse = current.mouse
+    tracked = current.tracking
+
+    if args.json:
+        print(
+            json.dumps(
+                {
+                    "schema_version": 1,
+                    "path": str(path or default_profile_path()),
+                    "mouse": (
+                        None
+                        if mouse is None
+                        else {
+                            "dpi_x": mouse.dpi_x,
+                            "dpi_y": mouse.dpi_y,
+                            "anisotropy": mouse.anisotropy,
+                        }
+                    ),
+                    "tracking": (
+                        None
+                        if tracked is None
+                        else {
+                            "landing_mm": tracked.landing_mm,
+                            "lift_off_mm": tracked.lift_off_mm,
+                            "label": tracked.label,
+                            "of_concern": tracked.of_concern,
+                        }
+                    ),
+                },
+                indent=2,
+            )
+        )
+        return 0
+
+    if mouse is None:
+        print("no mouse recorded.", file=sys.stderr)
+        print("  forge profile --dpi 800", file=sys.stderr)
+        print("  forge profile --dpi-x 1350 --dpi-y 1400", file=sys.stderr)
+    else:
+        print(f"mouse: {mouse.describe()}", file=sys.stderr)
+        x, y = mouse.step_fraction()
+        print(f"  a 50-count DPI step is {x:.2%} horizontally, {y:.2%} vertically", file=sys.stderr)
+
+    if tracked is None:
+        print("no sensor cut-off recorded.", file=sys.stderr)
+        print("  forge profile --asymmetric-cutoff 1", file=sys.stderr)
+        print("  forge profile --cutoff-label Medium", file=sys.stderr)
+    else:
+        print(f"tracking: {tracked.describe()}", file=sys.stderr)
+        if tracked.of_concern:
+            print(
+                "  above the height where lift-off is worth mentioning: some cursor "
+                "motion while repositioning is recorded as though it were aim",
+                file=sys.stderr,
+            )
+
+    print(
+        "\ndeclared, not measured — no file on disk records any of this, so it is "
+        "taken on trust and any finding that uses it says so",
+        file=sys.stderr,
+    )
+    return 0
+
+
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="forge",
@@ -439,6 +562,81 @@ def _build_parser() -> argparse.ArgumentParser:
         help=f"where to write the page (default: {default_page_path()})",
     )
     live.set_defaults(func=_live)
+
+    profile = subparsers.add_parser(
+        "profile",
+        help="record hardware that no file on disk knows about",
+        description=(
+            "A replay stores the cursor position in osu! pixels and never the mouse "
+            "counts behind it, so nothing on disk records your DPI. Without it, a "
+            "pointer finding can only say 'your gain is 2% high'; with it, that "
+            "becomes a number of DPI counts and an answer to whether a 50-count step "
+            "is too coarse to be worth taking.\n\n"
+            "Stored outside the osu! install, like everything else this tool writes. "
+            "Run with no arguments to see what is recorded."
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    profile.add_argument(
+        "--dpi",
+        type=int,
+        metavar="N",
+        help="mouse DPI, when both axes are the same",
+    )
+    profile.add_argument(
+        "--dpi-x",
+        type=int,
+        metavar="N",
+        help="horizontal DPI, when the axes differ",
+    )
+    profile.add_argument(
+        "--dpi-y",
+        type=int,
+        metavar="N",
+        help="vertical DPI, when the axes differ",
+    )
+    profile.add_argument(
+        "--asymmetric-cutoff",
+        type=int,
+        choices=sorted(hardware.ASYMMETRIC_CUTOFF_PRESETS),
+        metavar="N",
+        help=(
+            "sensor cut-off preset: "
+            + "; ".join(
+                f"{n} = landing {land:g}mm, lift-off {lift:g}mm"
+                for n, (land, lift) in sorted(hardware.ASYMMETRIC_CUTOFF_PRESETS.items())
+            )
+        ),
+    )
+    profile.add_argument(
+        "--lift-off-mm",
+        type=float,
+        metavar="MM",
+        help="height at which the sensor stops tracking, if you know it in mm",
+    )
+    profile.add_argument(
+        "--landing-mm",
+        type=float,
+        metavar="MM",
+        help="height at which the sensor resumes tracking on the way down",
+    )
+    profile.add_argument(
+        "--cutoff-label",
+        metavar="TEXT",
+        help=(
+            "vendor setting when the millimetres are not published — Low, Medium, "
+            "High. Recorded as a label with the distances left unknown, rather than "
+            "as invented numbers"
+        ),
+    )
+    profile.add_argument(
+        "--path",
+        type=Path,
+        default=None,
+        help=f"where the profile lives (default: {default_profile_path()})",
+    )
+    profile.add_argument("--json", action="store_true", help="machine-readable output on stdout")
+    profile.set_defaults(func=_profile)
 
     return parser
 

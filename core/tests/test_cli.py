@@ -135,6 +135,95 @@ class TestScan:
         assert all("source" in p for p in payload["probes"].values())
 
 
+class TestProfile:
+    """The one place the tool asks rather than reads."""
+
+    def run(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str], *args: str
+    ) -> tuple[int, str, str]:
+        return _run(["profile", "--path", str(tmp_path / "profile.json"), *args], capsys)
+
+    def test_an_empty_profile_says_how_to_fill_it(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        code, _, err = self.run(tmp_path, capsys)
+        assert code == 0
+        assert "no mouse recorded" in err
+        assert "--dpi-x 1350 --dpi-y 1400" in err
+
+    def test_setting_both_axes_reports_the_step_on_each(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        code, _, err = self.run(tmp_path, capsys, "--dpi-x", "1350", "--dpi-y", "1400")
+        assert code == 0
+        assert "1350 x 1400 DPI" in err
+        assert "3.70% horizontally, 3.57% vertically" in err
+
+    def test_one_axis_alone_is_refused_rather_than_filled_in(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        # Copying the given axis onto the missing one would record isotropy
+        # that was never claimed, and separate axes exist precisely because
+        # assuming they match is the mistake.
+        code, _, err = self.run(tmp_path, capsys, "--dpi-x", "1350")
+        assert code == 2
+        assert "must be given together" in err
+
+    def test_dpi_and_a_single_axis_together_are_refused(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        code, _, err = self.run(tmp_path, capsys, "--dpi", "800", "--dpi-y", "900")
+        assert code == 2
+        assert "sets both axes" in err
+
+    def test_an_implausible_dpi_is_refused_before_it_is_written(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        code, _, err = self.run(tmp_path, capsys, "--dpi", "3")
+        assert code == 2
+        assert "typo rather than a mouse" in err
+        assert not (tmp_path / "profile.json").exists()
+
+    def test_a_cutoff_preset_expands_to_its_distances(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        code, _, err = self.run(tmp_path, capsys, "--asymmetric-cutoff", "3")
+        assert code == 0
+        assert "lift-off 3mm" in err and "landing 2mm" in err
+        assert "recorded as though it were aim" in err, "3mm is past the line"
+
+    def test_the_tightest_preset_gets_no_warning(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        _, _, err = self.run(tmp_path, capsys, "--asymmetric-cutoff", "1")
+        assert "recorded as though it were aim" not in err
+
+    def test_the_two_declarations_accumulate_rather_than_replace(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        self.run(tmp_path, capsys, "--dpi", "800")
+        self.run(tmp_path, capsys, "--asymmetric-cutoff", "1")
+        code, out, _ = self.run(tmp_path, capsys, "--json")
+        assert code == 0
+        data = json.loads(out)
+        assert data["mouse"]["dpi_x"] == 800, "setting the cut-off must not drop the mouse"
+        assert data["tracking"]["lift_off_mm"] == 2.0
+
+    def test_everything_written_is_marked_as_taken_on_trust(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        _, _, err = self.run(tmp_path, capsys, "--dpi", "800")
+        assert "declared, not measured" in err
+
+    def test_the_profile_never_lands_in_the_osu_install(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch
+    ) -> None:
+        monkeypatch.setenv("OSU_FORGE_PROFILE", str(tmp_path / "p.json"))
+        code, _, err = _run(["profile", "--dpi", "800"], capsys)
+        assert code == 0
+        assert "osu!" not in err
+
+
 class TestNoCredentialReachesAnyStream:
     @pytest.mark.parametrize(
         "argv",
@@ -168,7 +257,9 @@ class TestAdvisoryOnly:
             action for action in parser._actions if hasattr(action, "choices") and action.choices
         )
         commands = set(subparsers.choices)  # type: ignore[arg-type]
-        assert commands == {"doctor", "scan", "collect", "live"}
+        # `collect`, `live` and `profile` write, but only under
+        # %LOCALAPPDATA%\osu-forge. Nothing here opens a file the game owns.
+        assert commands == {"doctor", "scan", "collect", "live", "profile"}
         assert not commands & {"apply", "fix", "write", "set", "install", "repair"}
 
     def test_the_config_file_is_untouched_by_a_full_run(
