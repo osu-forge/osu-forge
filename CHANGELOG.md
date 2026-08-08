@@ -69,6 +69,12 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 - `osuforge.replay.validate` — the screen that decides whether to believe a
   simulation, and the circuit breaker that withholds any recommendation from a
   corpus it does not.
+- `engine/prototype` — read-only attachment to a running osu!, region-clipped
+  reads, pattern scanning, and a `.NET` string reader whose type check is
+  bootstrapped from a string the configuration file already names.
+- `engine/CLEANROOM.md` — what has been observed about osu!'s memory, how, and
+  when. Nothing in it comes from another project.
+- `scripts/dev-setup.ps1` — the whole contributor setup in one command.
 - `osuforge.collect` and `forge collect` — an append-only record of which
   replays exist and what the timing-relevant settings were, so that sessions and
   a settings history accumulate going forward. An offset estimate is limited by
