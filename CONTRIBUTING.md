@@ -84,6 +84,14 @@ of them will fail:
 1. **`WriteProcessMemory`, `CreateRemoteThread`, `VirtualAllocEx`, `SendInput`,
    `keybd_event`, `mouse_event`, `SetWindowsHookEx`** — anywhere in the repository.
 2. **`ReadProcessMemory` outside `engine/`.**
+
+   > The CI check is a plain grep. It skips `//` and `#` comment lines, but it
+   > cannot tell a Python docstring from a call, so **do not spell these names in
+   > docstrings or string literals outside `engine/`** — write "process-memory
+   > APIs" instead. Loosening the filter enough to allow docstrings would also
+   > let a `getattr(kernel32, "...")` lookup through, and the check is worth more
+   > strict than convenient. (Markdown files are not scanned, so prose in the
+   > docs may name them freely — as this line does.)
 3. **`hwtest/` importing `core/` or `extensions/`** — the hardware logger must stay
    structurally incapable of correlating input to game state.
 4. **An `apply` / `fix` / `write` command** that modifies `osu!.cfg`. The tool

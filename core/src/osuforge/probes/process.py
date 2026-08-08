@@ -3,7 +3,12 @@
 Detection only. This module enumerates process names and nothing else — it does
 not open a handle to osu!, does not read its memory, and could not: the only
 API it touches is ``psutil.process_iter``. The repo-wide CI grep for
-``ReadProcessMemory`` and friends covers the rest.
+process-memory and input-synthesis APIs covers the rest.
+
+(Those API names are deliberately not spelled out here. The CI check is a plain
+grep with no way to tell a docstring from a call, and keeping it strict is worth
+more than the convenience of naming them in prose — a filter permissive enough
+to skip docstrings would also skip a `getattr(kernel32, "...")` lookup.)
 
 The reason to care is narrow but real. osu! rewrites its config when it exits,
 so a config read while the game is running may not be what the game will keep,
