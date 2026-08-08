@@ -20,6 +20,8 @@ from ._native import (
     BeatmapError,
     HitObject,
     ObjectKind,
+    PartKind,
+    SliderPart,
 )
 
 __all__ = [
@@ -30,4 +32,6 @@ __all__ = [
     "BeatmapError",
     "HitObject",
     "ObjectKind",
+    "PartKind",
+    "SliderPart",
 ]

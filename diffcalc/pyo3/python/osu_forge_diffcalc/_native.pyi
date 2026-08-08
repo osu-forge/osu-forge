@@ -30,6 +30,29 @@ class ObjectKind:
     def __int__(self) -> int: ...
 
 @final
+class PartKind:
+    Tick: ClassVar[PartKind]
+    Repeat: ClassVar[PartKind]
+    Tail: ClassVar[PartKind]
+
+    def __eq__(self, other: object) -> bool: ...
+    def __hash__(self) -> int: ...
+    def __int__(self) -> int: ...
+
+@final
+class SliderPart:
+    @property
+    def time(self) -> float: ...
+    @property
+    def x(self) -> float:
+        """Where the ball is at `time`, with the slider's stack offset applied."""
+
+    @property
+    def y(self) -> float: ...
+    @property
+    def kind(self) -> PartKind: ...
+
+@final
 class HitObject:
     @property
     def time(self) -> int:
@@ -57,6 +80,9 @@ class HitObject:
     def new_combo(self) -> bool: ...
     @property
     def stack_height(self) -> int: ...
+    @property
+    def parts(self) -> list[SliderPart]:
+        """Ticks, repeats and the tail, in time order. Empty for a non-slider."""
 
 @final
 class Beatmap:

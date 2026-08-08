@@ -60,6 +60,15 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 - `osu_forge_diffcalc` — PyO3 bindings, so the replay hit simulator reads
   beatmaps through the same parser as difficulty calculation instead of through
   a second one written in Python.
+- Slider parts — ticks, repeat points and the tail, with the position of the
+  ball at each. A slider's grade comes from how many of them the player
+  collected, so judgement counts cannot be reproduced without them.
+- `osuforge.replay.simulate` — the hit simulator. Presses are matched to objects
+  by timing *and* by where the cursor was, and sliders are scored part by part
+  against the follow circle.
+- `osuforge.replay.validate` — the screen that decides whether to believe a
+  simulation, and the circuit breaker that withholds any recommendation from a
+  corpus it does not.
 
 ### Changed
 - Integration tests are deselected by default and require an environment

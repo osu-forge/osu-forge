@@ -17,7 +17,7 @@
 // targets. Silenced here rather than by loosening `-D warnings` in CI.
 #![allow(linker_messages)]
 
-use osu_forge_diffcalc::beatmap::{self, HitObjectKind, Stacking};
+use osu_forge_diffcalc::beatmap::{self, HitObjectKind, NestedKind, Stacking};
 use osu_forge_diffcalc::mods::Mods;
 use pyo3::create_exception;
 use pyo3::exceptions::PyException;
@@ -45,6 +45,42 @@ pub enum ObjectKind {
     Spinner,
 }
 
+/// Which kind of scoreable point along a slider this is.
+#[pyclass(eq, eq_int, skip_from_py_object, module = "osu_forge_diffcalc")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PartKind {
+    Tick,
+    Repeat,
+    /// The slider's end, judged 36 ms early — which is what lets a slider be
+    /// released slightly early without being dropped.
+    Tail,
+}
+
+/// A point along a slider that is scored on its own.
+///
+/// A slider's grade comes from how many of these the player collected, so
+/// reproducing judgement counts needs them. The head is not among them: it is
+/// the hit object itself.
+#[pyclass(frozen, get_all, skip_from_py_object, module = "osu_forge_diffcalc")]
+#[derive(Clone)]
+pub struct SliderPart {
+    pub time: f64,
+    /// Where the ball is at `time`, with the slider's stack offset applied.
+    pub x: f64,
+    pub y: f64,
+    pub kind: PartKind,
+}
+
+#[pymethods]
+impl SliderPart {
+    fn __repr__(&self) -> String {
+        format!(
+            "SliderPart({:?} at {:.0}ms, ({:.1}, {:.1}))",
+            self.kind, self.time, self.x, self.y
+        )
+    }
+}
+
 #[pyclass(frozen, get_all, skip_from_py_object, module = "osu_forge_diffcalc")]
 #[derive(Clone)]
 pub struct HitObject {
@@ -65,6 +101,9 @@ pub struct HitObject {
     pub kind: ObjectKind,
     pub new_combo: bool,
     pub stack_height: i32,
+    /// Ticks, repeat points and the tail, in time order. Empty for anything
+    /// that is not a slider.
+    pub parts: Vec<SliderPart>,
 }
 
 #[pymethods]
@@ -101,6 +140,20 @@ fn build_objects(py: Python<'_>, map: &beatmap::Beatmap) -> PyResult<Py<PyList>>
             // else's interpreter.
             HitObjectKind::Hold { end_time } => (f64::from(*end_time), ObjectKind::Circle),
         };
+        let parts = map
+            .slider_parts(object)
+            .into_iter()
+            .map(|part| SliderPart {
+                time: part.time,
+                x: part.pos.x,
+                y: part.pos.y,
+                kind: match part.kind {
+                    NestedKind::Tick => PartKind::Tick,
+                    NestedKind::Repeat => PartKind::Repeat,
+                    NestedKind::Tail => PartKind::Tail,
+                },
+            })
+            .collect();
         items.push(Py::new(
             py,
             HitObject {
@@ -113,6 +166,7 @@ fn build_objects(py: Python<'_>, map: &beatmap::Beatmap) -> PyResult<Py<PyList>>
                 kind,
                 new_combo: object.new_combo,
                 stack_height: object.stack_height,
+                parts,
             },
         )?);
     }
@@ -320,6 +374,8 @@ fn _native(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<Beatmap>()?;
     m.add_class::<HitObject>()?;
     m.add_class::<ObjectKind>()?;
+    m.add_class::<SliderPart>()?;
+    m.add_class::<PartKind>()?;
     m.add("BeatmapError", py.get_type::<BeatmapError>())?;
     m.add("MODS", mod_table(py)?)?;
     m.add("STACK_DISTANCE", beatmap::STACK_DISTANCE)?;

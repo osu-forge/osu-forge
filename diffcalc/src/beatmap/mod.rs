@@ -8,10 +8,12 @@
 
 mod curve;
 mod model;
+mod nested;
 mod parse;
 mod stacking;
 
 pub use curve::SliderPath;
+pub use nested::{NestedKind, NestedObject};
 pub use model::{
     Beatmap, CurveKind, Difficulty, HitObject, HitObjectKind, Metadata, Mode, Pos, Slider,
     Stacking, TimingPoint, OBJECT_RADIUS, STABLE_RADIUS_FUDGE, STACK_OFFSET_PER_LEVEL,
