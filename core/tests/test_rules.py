@@ -12,7 +12,8 @@ import pytest
 from osuforge.config import OsuConfig
 from osuforge.models import Basis, Category, Confidence, Finding, Severity, Subsystem
 from osuforge.probes.base import ProbeResult
-from osuforge.rules import ALL_RULES, RuleContext, run_rules
+from osuforge.probes.collect import collect_probes
+from osuforge.rules import ALL_RULES, CONFIG_ONLY_RULES, RuleContext, run_rules
 from osuforge.rules.engine import Rule
 
 from .fixtures import REALISTIC_CFG, build_cfg
@@ -224,9 +225,28 @@ class TestMouseRules:
 
 
 class TestNoRuleReadsOutsideTheContext:
-    def test_rules_run_with_no_probes_at_all(self) -> None:
-        # Every rule shipped so far is config-only, so `forge doctor` must work
-        # with no probes, no elevation, and osu! not running.
-        findings = run_rules(ALL_RULES, RuleContext(config=OsuConfig.parse(REALISTIC_CFG)))
+    def test_config_only_rules_need_nothing_but_the_config(self) -> None:
+        # These must work with no probes, no elevation, and osu! not running —
+        # that is what makes `forge doctor --no-probes` a complete answer rather
+        # than a degraded one.
+        findings = run_rules(CONFIG_ONLY_RULES, RuleContext(config=OsuConfig.parse(REALISTIC_CFG)))
         assert not [f for f in findings if f.id.endswith(".skipped")]
         assert not [f for f in findings if f.id.endswith(".error")]
+
+    def test_probe_rules_skip_visibly_rather_than_vanish(self) -> None:
+        # Run everything with no probes at all. The probe-dependent rules must
+        # each say they could not run; none may fail silently, because a check
+        # that disappeared reads exactly like a check that passed.
+        findings = run_rules(ALL_RULES, RuleContext(config=OsuConfig.parse(REALISTIC_CFG)))
+        skipped = {f.id.removesuffix(".skipped") for f in findings if f.id.endswith(".skipped")}
+        expected = {rule.id for rule in ALL_RULES if rule.requires}
+        assert skipped == expected
+        assert not [f for f in findings if f.id.endswith(".error")]
+
+    def test_no_rule_declares_a_probe_that_no_probe_provides(self) -> None:
+        # A typo in a `requires` string would make a rule permanently skipped and
+        # look like a passing check forever.
+        available = set(collect_probes().keys())
+        for rule in ALL_RULES:
+            for probe_id in rule.requires:
+                assert probe_id in available, f"{rule.id} requires unknown probe {probe_id}"

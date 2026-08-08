@@ -12,15 +12,23 @@ probe is unavailable.
 
 from __future__ import annotations
 
-from osuforge.rules import frame, keybind, mouse
+from osuforge.rules import display, frame, keybind, mouse, system
 from osuforge.rules.engine import Rule, RuleContext, run_rules
 
-__all__ = ["ALL_RULES", "Rule", "RuleContext", "run_rules"]
+__all__ = ["ALL_RULES", "CONFIG_ONLY_RULES", "Rule", "RuleContext", "run_rules"]
 
-ALL_RULES: tuple[Rule, ...] = (
+CONFIG_ONLY_RULES: tuple[Rule, ...] = (
     *keybind.RULES,
     *frame.RULES,
     *mouse.RULES,
+)
+"""Rules that need nothing but the config file. These run with no probes, no
+elevation, and osu! not running."""
+
+ALL_RULES: tuple[Rule, ...] = (
+    *CONFIG_ONLY_RULES,
+    *display.RULES,
+    *system.RULES,
 )
 
 

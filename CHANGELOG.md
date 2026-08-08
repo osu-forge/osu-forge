@@ -27,6 +27,12 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   config-only so they run with no probes, no elevation, and osu! not running.
   A rule whose probe is unavailable emits a visible skip rather than vanishing,
   and a rule that raises costs its own finding rather than the whole report.
+- `osuforge.probes` — read-only Windows measurements: monitors via
+  `EnumDisplaySettingsExW`, pointer settings, accessibility shortcut state,
+  timer resolution, power scheme, Game Bar, Fullscreen Optimizations, osu!
+  process detection, and the monitor osu!'s window is actually on.
+- Nine system rules built on those probes, and `forge doctor` / `forge scan`
+  with `--json`, `--only-facts`, `--severity` and `--fail-on`.
 
 ### Fixed
 - The Python license gate reported success when `pip-licenses` had failed and
