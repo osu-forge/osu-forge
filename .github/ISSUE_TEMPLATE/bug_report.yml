@@ -1,0 +1,78 @@
+name: Bug report
+description: Something is broken or produces a wrong result
+title: "[bug] "
+labels: ["bug", "triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Two categories have their own templates — please use those instead if they
+        fit: [antivirus false positives](?template=av_false_positive.yml) and
+        [engine broken after an osu! update](?template=engine_broken.yml).
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: Which part?
+      options:
+        - "offset — replay hit-error analysis"
+        - "input — keyboard analysis"
+        - "aim — cursor / sensitivity analysis"
+        - "doctor — config linter"
+        - "diffcalc — star rating / pp"
+        - "hwtest — hardware diagnostics"
+        - "server / dashboard / report"
+        - "extension host"
+        - "other / not sure"
+    validations:
+      required: true
+
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: Include the exact command you ran and the full output.
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected
+    validations:
+      required: true
+
+  - type: markdown
+    attributes:
+      value: |
+        > **If a reported number looks wrong**, tell us what you believe the correct
+        > value is and how you know — the results screen, another tool, a manual
+        > calculation. A statistic that is confidently wrong is worse than one that
+        > is missing, so these reports are taken seriously.
+
+  - type: input
+    id: version
+    attributes:
+      label: osu-forge version
+      placeholder: "v0.1.0 or commit sha"
+    validations:
+      required: true
+
+  - type: input
+    id: os
+    attributes:
+      label: Windows version
+      placeholder: "Windows 11 Pro 26200"
+    validations:
+      required: true
+
+  - type: textarea
+    id: extra
+    attributes:
+      label: Anything else
+      description: |
+        Logs, screenshots, or a report file.
+
+        **Do not attach `.osr` replays or your `osu!.<user>.cfg`** — the config
+        contains an encrypted credential blob, and replays identify you. If a
+        specific replay is needed we will ask, and tell you what to strip first.

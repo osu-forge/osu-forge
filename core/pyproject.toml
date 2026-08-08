@@ -1,0 +1,103 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "osuforge"
+version = "0.1.0"
+description = "Extensible analysis and tuning platform for osu!stable"
+readme = "../README.md"
+requires-python = ">=3.14"
+license = "Apache-2.0"
+license-files = ["../LICENSE", "../NOTICE"]
+authors = [{ name = "osu-forge contributors" }]
+keywords = ["osu", "analysis", "offset", "unstable-rate", "gaming"]
+classifiers = [
+    "Development Status :: 2 - Pre-Alpha",
+    "Environment :: Win32 (MS Windows)",
+    "Intended Audience :: End Users/Desktop",
+    "License :: OSI Approved :: Apache Software License",
+    "Operating System :: Microsoft :: Windows :: Windows 10",
+    "Operating System :: Microsoft :: Windows :: Windows 11",
+    "Programming Language :: Python :: 3.14",
+    "Topic :: Games/Entertainment",
+]
+
+# Dependency licenses are gated in CI: GPL / LGPL / AGPL are rejected, as is any
+# package whose license cannot be determined. See CONTRIBUTING.md "Policy 1".
+dependencies = [
+    "numpy>=2.5",         # BSD-3-Clause
+    "scipy>=1.18",        # BSD-3-Clause  — bootstrap CIs
+    "statsmodels>=0.14.6",  # BSD-3-Clause — cluster-robust standard errors (first cp314 wheel)
+    "jinja2>=3.1",        # BSD-3-Clause  — HTML report
+    "psutil>=7.0",        # BSD-3-Clause  — osu! process detection only, no memory access
+    "comtypes>=1.4.16",   # MIT           — WASAPI IAudioClient::GetDevicePeriod
+    "pycaw>=20240210",    # MIT           — audio endpoint enumeration
+    "httpx>=0.28",        # BSD-3-Clause  — osu! API v2 (optional at runtime)
+]
+
+[project.optional-dependencies]
+# Cursor heatmap only. Every other chart is hand-written inline SVG, so that the
+# report renders in both light and dark themes from a single pass and stays
+# selectable text.
+charts = ["matplotlib>=3.11"]
+dev = [
+    "pytest>=8.3",
+    "pytest-cov",
+    "hypothesis>=6.100",
+    "ruff>=0.9",
+    "mypy>=1.14",
+    "import-linter>=2.1",
+]
+# NOTE: `circleguard` is deliberately absent from every extra. It is AGPL-3.0 and
+# is used only as a differential test oracle, installed into an isolated
+# virtualenv under tools/oracle-venv/ and driven by subprocess so that it is never
+# linked into a distributed artifact. See docs/licensing.md.
+
+[project.scripts]
+forge = "osuforge.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/osu-forge/osu-forge"
+Issues = "https://github.com/osu-forge/osu-forge/issues"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/osuforge"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py314"
+src = ["src"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "N", "UP", "B", "A", "C4", "SIM", "RUF"]
+
+[tool.mypy]
+python_version = "3.14"
+strict = true
+warn_unreachable = true
+files = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q --strict-markers"
+markers = [
+    "integration: touches real hardware or a live osu! process (deselected by default)",
+]
+
+[tool.importlinter]
+root_packages = ["osuforge"]
+# The Finding dataclass is the only type that crosses subsystem boundaries.
+# Without an enforced contract, the report layer slowly grows direct imports of
+# analysis internals and the contract stops being one.
+#
+# The contract below is written out but commented, because import-linter errors
+# on modules that do not exist yet and none of these do. Uncomment it — and add
+# `lint-imports` back to the Python CI job — in the same commit that creates
+# osuforge/report/, and never later than that.
+#
+# [[tool.importlinter.contracts]]
+# name = "Report and CLI depend only on the Finding contract"
+# type = "forbidden"
+# source_modules = ["osuforge.report", "osuforge.cli"]
+# forbidden_modules = ["osuforge.sources", "osuforge.services", "osuforge.host"]

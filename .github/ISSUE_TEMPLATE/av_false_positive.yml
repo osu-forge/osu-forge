@@ -1,0 +1,92 @@
+name: Antivirus false positive
+description: Your antivirus flagged an osu-forge release
+title: "[AV] "
+labels: ["antivirus", "triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Antivirus false positives are **expected** for tools that read another
+        process's memory, and they affect every tool in this category. They are
+        almost always heuristic or ML detections rather than a real signature
+        match — which is why a binary that scanned clean last week can be flagged
+        today with no change to the file.
+
+        **Before filing, please verify the checksum.** If it does not match the
+        SHA-256 published on the release page, do not run the file, and report it
+        as a security issue instead.
+
+        ```powershell
+        Get-FileHash .\osu-forge-engine.exe -Algorithm SHA256
+        ```
+
+  - type: input
+    id: vendor
+    attributes:
+      label: Antivirus product and version
+      placeholder: "Microsoft Defender 1.421.xxx / Malwarebytes 5.x"
+    validations:
+      required: true
+
+  - type: input
+    id: detection
+    attributes:
+      label: Detection name
+      description: The exact string the product showed, e.g. `Trojan:Win32/Wacatac.B!ml`.
+      placeholder: "Trojan:Win32/Wacatac.B!ml"
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: osu-forge version
+      placeholder: "v0.1.0"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: checksum
+    attributes:
+      label: Does the SHA-256 match the release page?
+      options:
+        - "Yes"
+        - "No"
+        - "I did not check"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: source
+    attributes:
+      label: Where did you download it?
+      options:
+        - GitHub releases page
+        - Built it myself from source
+        - Somewhere else
+    validations:
+      required: true
+
+  - type: markdown
+    attributes:
+      value: |
+        ## Submitting the false positive to your vendor
+
+        This genuinely helps, and it helps everyone who uses the tool — a cleared
+        detection sticks across future signed releases.
+
+        - **Microsoft Defender** — submit at
+          [microsoft.com/wdsi/filesubmission](https://www.microsoft.com/en-us/wdsi/filesubmission),
+          choose *Software developer*, and select "Incorrectly detected as malware".
+        - **Malwarebytes** — use the false positive form on the
+          [Malwarebytes support site](https://support.malwarebytes.com/).
+        - **Other vendors** — most have a "submit a false positive" form; search for
+          `<vendor> false positive submission`.
+
+        Please paste the vendor's response here when you get one.
+
+  - type: textarea
+    id: notes
+    attributes:
+      label: Anything else
+      description: Vendor response, scan log excerpt, or whether a rescan later came back clean.

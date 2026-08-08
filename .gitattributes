@@ -1,0 +1,17 @@
+# Normalize to LF in the repository. CI runs the invariant checks on
+# ubuntu-latest, and .editorconfig already declares LF, so keeping the working
+# tree consistent avoids a class of "works locally, fails in CI" problems.
+* text=auto eol=lf
+
+# Binary-ish assets, never normalized.
+*.png binary
+*.jpg binary
+*.ico binary
+*.osz binary
+*.osr binary
+*.db  binary
+*.whl binary
+*.exe binary
+
+# Generated; collapse in diffs and exclude from language stats.
+Cargo.lock linguist-generated=true -diff

@@ -1,0 +1,34 @@
+[package]
+name = "osu-forge-diffcalc"
+description = "Independent implementation of osu! difficulty and performance calculation"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[lib]
+name = "osu_forge_diffcalc"
+crate-type = ["rlib", "cdylib"]
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+
+[features]
+default = []
+# Enables the accuracy tests that compare our difficulty attributes against the
+# official POST /api/v2/beatmaps/{id}/attributes endpoint. Requires
+# OSU_CLIENT_ID / OSU_CLIENT_SECRET. Run in CI, not in a normal `cargo test`.
+official-oracle = []
+# PyO3 bindings, so core/ (Python) and the engine share one implementation
+# rather than each having their own .osu parser.
+python = []
+
+[lints.clippy]
+# Difficulty calculation is dense float arithmetic ported from C#. Keeping the
+# structure recognizable against the upstream source matters more here than
+# idiomatic Rust, so a few pedantic lints are relaxed deliberately.
+too_many_arguments = "allow"

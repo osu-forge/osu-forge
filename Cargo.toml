@@ -1,0 +1,34 @@
+[workspace]
+resolver = "2"
+members = [
+    "engine",
+    "diffcalc",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.82"
+license = "Apache-2.0"
+repository = "https://github.com/osu-forge/osu-forge"
+authors = ["osu-forge contributors"]
+
+[workspace.dependencies]
+# windows-sys rather than the `windows` crate: the engine needs about eight
+# functions, and the Result/HSTRING wrapper machinery is compile time we do not
+# need to pay for.
+windows-sys = "0.61"
+memchr = "2.8"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+
+[profile.release]
+# The engine binary is code-signed and distributed. Keep it small and stripped,
+# but do NOT pack or obfuscate — both make AV heuristics worse, and we already
+# fight enough false positives.
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+strip = "symbols"
+panic = "abort"

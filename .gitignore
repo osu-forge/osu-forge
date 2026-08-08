@@ -1,0 +1,50 @@
+# --- osu! user data -----------------------------------------------------------
+# Never commit personal gameplay data. Replays and configs identify the player,
+# and osu!.<user>.cfg contains a DPAPI-encrypted credential blob.
+*.osr
+*.osu
+*.osz
+*.osg
+*.db
+osu!.*.cfg
+
+# --- secrets ------------------------------------------------------------------
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# --- Python -------------------------------------------------------------------
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# --- Rust ---------------------------------------------------------------------
+target/
+**/*.rs.bk
+
+# --- Node (web/ only) ---------------------------------------------------------
+node_modules/
+.pnpm-store/
+
+# --- tooling ------------------------------------------------------------------
+tools/oracle-venv/
+.idea/
+.vscode/
+*.swp
+.DS_Store
+Thumbs.db
+
+# --- generated output ---------------------------------------------------------
+report.html
+*.local.json

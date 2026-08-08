@@ -1,0 +1,32 @@
+version: 2
+
+# Note: the license gate (.github/workflows/license-gate.yml) runs on every
+# Dependabot PR. A bump that pulls in a copyleft transitive dependency fails CI
+# rather than merging quietly.
+
+updates:
+  - package-ecosystem: cargo
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    labels: ["dependencies", "rust"]
+    groups:
+      rust-minor:
+        update-types: ["minor", "patch"]
+
+  - package-ecosystem: pip
+    directory: /core
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    labels: ["dependencies", "python"]
+    groups:
+      python-minor:
+        update-types: ["minor", "patch"]
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly
+    labels: ["dependencies", "ci"]

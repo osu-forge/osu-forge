@@ -1,0 +1,44 @@
+[package]
+name = "osu-forge-engine"
+description = "Read-only memory engine for osu!stable"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[[bin]]
+name = "osu-forge-engine"
+path = "src/main.rs"
+
+[dependencies]
+memchr.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+
+[dependencies.windows-sys]
+workspace = true
+features = [
+    # OpenProcess, CloseHandle
+    "Win32_System_Threading",
+    # EnumProcesses, EnumProcessModulesEx, GetModuleInformation.
+    # Note: EnumProcessModulesEx must be called with LIST_MODULES_32BIT or
+    # LIST_MODULES_ALL to see a WOW64 target's modules — the DEFAULT filter
+    # silently returns nothing for 32-bit modules of a 32-bit process.
+    "Win32_System_ProcessStatus",
+    # VirtualQueryEx — needed to clip reads to committed, readable regions.
+    # ReadProcessMemory is all-or-nothing per call and cannot straddle a
+    # region boundary.
+    "Win32_System_Memory",
+    # ReadProcessMemory
+    "Win32_System_Diagnostics_Debug",
+    "Win32_Foundation",
+]
+
+[lints.rust]
+unsafe_op_in_unsafe_fn = "deny"
+
+[lints.clippy]
+undocumented_unsafe_blocks = "warn"

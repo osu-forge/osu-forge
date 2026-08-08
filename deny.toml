@@ -1,0 +1,47 @@
+# cargo-deny configuration
+#
+# The licenses section is the load-bearing part: osu-forge ships under Apache-2.0,
+# so a copyleft dependency anywhere in the tree would relicense the whole project.
+# CI runs `cargo deny check licenses` and a violation fails the build.
+#
+# See CONTRIBUTING.md "Policy 1 — Dependency licenses".
+
+[graph]
+targets = [
+    { triple = "x86_64-pc-windows-msvc" },
+]
+all-features = true
+
+[licenses]
+# Anything not on this list is denied. There is deliberately no `deny` list —
+# an allowlist fails closed, which is what we want for a license gate.
+allow = [
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "MIT",
+    "MIT-0",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "MPL-2.0",
+    "Unicode-3.0",
+    "Unlicense",
+    "Zlib",
+    "CC0-1.0",
+]
+# A crate whose license cannot be determined is treated as a failure, not a pass.
+# Absent a license, default copyright reserves all rights.
+unused-allowed-license = "allow"
+confidence-threshold = 0.93
+
+[bans]
+multiple-versions = "warn"
+wildcards = "deny"
+
+[advisories]
+yanked = "deny"
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]

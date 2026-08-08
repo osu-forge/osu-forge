@@ -1,0 +1,48 @@
+osu-forge
+Copyright 2026 osu-forge contributors
+
+This product includes software developed by the osu-forge contributors,
+licensed under the Apache License, Version 2.0.
+
+--------------------------------------------------------------------------------
+Third-party attributions
+--------------------------------------------------------------------------------
+
+Difficulty and performance-point calculation
+--------------------------------------------
+The `diffcalc` component implements osu!'s difficulty and performance-point
+algorithms. It is derived from the reference implementations in:
+
+  ppy/osu        — https://github.com/ppy/osu        — MIT License
+  ppy/osu-tools  — https://github.com/ppy/osu-tools  — MIT License
+
+  Copyright (c) ppy Pty Ltd <contact@ppy.sh>
+
+  Permission is hereby granted, free of charge, to any person obtaining a copy
+  of this software and associated documentation files (the "Software"), to deal
+  in the Software without restriction, including without limitation the rights
+  to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+  copies of the Software, and to permit persons to whom the Software is
+  furnished to do so, subject to the following conditions:
+
+  The above copyright notice and this permission notice shall be included in all
+  copies or substantial portions of the Software.
+
+  THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+  IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+  FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+  AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+  LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+  OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+  SOFTWARE.
+
+The exact upstream commits this port tracks are recorded in
+`diffcalc/PORTED_FROM.md`.
+
+--------------------------------------------------------------------------------
+
+osu! is a trademark of ppy Pty Ltd. osu-forge is an independent community
+project and is not affiliated with, endorsed by, or supported by ppy Pty Ltd.
+
+See `docs/licensing.md` for the project's dependency-license policy and for the
+provenance rules governing memory-layout data in the `engine` component.

@@ -1,0 +1,90 @@
+name: Engine broken after an osu! update
+description: The memory engine fails to attach, or reports values that look wrong
+title: "[engine] "
+labels: ["engine", "osu-update", "triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        osu!stable updates occasionally move the memory layout the engine reads.
+        Historically this happens a few times a year and is usually a same-day fix
+        once we know which build broke it — so the **osu! build number below is the
+        single most useful thing in this report.**
+
+        Find it in the bottom-right corner of the osu! main menu, e.g.
+        `b20260711.1`.
+
+  - type: dropdown
+    id: symptom
+    attributes:
+      label: What happened?
+      options:
+        - "Engine fails to attach (loud error, no data at all)"
+        - "Engine attaches but some fields are missing / marked unavailable"
+        - "Engine attaches and reports values that are WRONG"
+      default: 0
+    validations:
+      required: true
+
+  - type: markdown
+    attributes:
+      value: |
+        > If you chose **"reports values that are WRONG"**, that is the failure mode
+        > the engine is specifically designed to prevent — it is supposed to fail
+        > loudly rather than report a plausible-looking wrong number. Silent
+        > corruption is treated as a higher-priority bug than a failure to attach.
+
+  - type: input
+    id: osu_version
+    attributes:
+      label: osu! build number
+      description: Bottom-right of the osu! main menu.
+      placeholder: "b20260711.1"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: stream
+    attributes:
+      label: Release stream
+      options:
+        - Stable
+        - Cutting Edge
+        - Tachyon
+        - Not sure
+    validations:
+      required: true
+
+  - type: input
+    id: forge_version
+    attributes:
+      label: osu-forge version
+      placeholder: "v0.1.0"
+    validations:
+      required: true
+
+  - type: textarea
+    id: output
+    attributes:
+      label: Engine output
+      description: |
+        Run `forge engine diagnose` and paste the full output. It lists which
+        signatures resolved, how many times each matched, and which self-validation
+        checks passed.
+      render: text
+    validations:
+      required: true
+
+  - type: textarea
+    id: wrong_values
+    attributes:
+      label: If values were wrong — what did the engine say vs. what was on screen?
+      description: Field by field, e.g. "combo showed 4128 while the game showed 312".
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Please confirm
+      options:
+        - label: osu! and osu-forge are running at the same integrity level (both elevated, or neither)
+        - label: I am not running the osu!tourney client

@@ -1,0 +1,157 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  invariants:
+    name: Architecture invariants
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # These are the guarantees README.md makes to users. They are enforced
+      # here rather than by convention, because a convention that is only
+      # documented is a convention that eventually gets broken.
+      - name: No process-writing or input-synthesis APIs anywhere
+        run: |
+          set -uo pipefail
+          FORBIDDEN='WriteProcessMemory|CreateRemoteThread|VirtualAllocEx|VirtualProtectEx|QueueUserAPC|SetWindowsHookEx|SendInput|keybd_event|mouse_event|SetCursorPos|SeDebugPrivilege|PROCESS_ALL_ACCESS|PROCESS_VM_WRITE'
+          # Comment lines are excluded: the engine's module docs name these APIs
+          # precisely in order to state that it does not call them, and you cannot
+          # invoke an API from inside a comment. Output is `path:line:content`,
+          # so the filter anchors on the content after the second colon.
+          HITS=$(grep -rInE "$FORBIDDEN" \
+                   --include='*.rs' --include='*.py' --include='*.ts' --include='*.js' \
+                   --exclude-dir=target --exclude-dir=.venv --exclude-dir=node_modules \
+                   . | grep -vE '^[^:]+:[0-9]+:[[:space:]]*(//|#|\*|/\*)' || true)
+          if [ -n "$HITS" ]; then
+            echo "$HITS"
+            echo "::error::Forbidden Win32 API found. See CONTRIBUTING.md."
+            exit 1
+          fi
+          echo "OK: no process-writing or input-synthesis APIs."
+
+      - name: ReadProcessMemory confined to engine/
+        run: |
+          set -uo pipefail
+          # The Python prototype under engine/ is expected to use it; nothing else is.
+          HITS=$(grep -rInE 'ReadProcessMemory' \
+                   --include='*.rs' --include='*.py' \
+                   --exclude-dir=target --exclude-dir=.venv \
+                   . | grep -vE '^[^:]+:[0-9]+:[[:space:]]*(//|#|\*|/\*)' \
+                     | grep -v '^\./engine/' || true)
+          if [ -n "$HITS" ]; then
+            echo "$HITS"
+            echo "::error::ReadProcessMemory outside engine/. See CONTRIBUTING.md."
+            exit 1
+          fi
+          echo "OK: ReadProcessMemory confined to engine/."
+
+      - name: hwtest/ must not import core/ or extensions/
+        run: |
+          set -euo pipefail
+          # The live input logger must stay structurally incapable of correlating
+          # keystrokes to game state. This import ban is how that is guaranteed.
+          if [ -d hwtest ] && grep -rInE '^\s*(from|import)\s+(osuforge|extensions)\b' hwtest/ ; then
+            echo "::error::hwtest/ must not import core/ or extensions/."
+            exit 1
+          fi
+          echo "OK: hwtest/ isolation intact."
+
+      - name: No apply/fix/write CLI command
+        run: |
+          set -euo pipefail
+          # "Advisory only" is expressed by the capability not existing.
+          if [ -d core ] && grep -rInE 'def (apply|fix)_config|"(apply|fix)".*command|command\("(apply|fix)"' core/ ; then
+            echo "::error::A config-mutating command appears to have been added."
+            exit 1
+          fi
+          echo "OK: no config-mutating command."
+
+      - name: No personal osu! data committed
+        run: |
+          set -euo pipefail
+          if git ls-files | grep -InE '\.(osr|osu|osz|osg|db)$|osu!\..*\.cfg$' ; then
+            echo "::error::Personal osu! data must never be committed. See .gitignore."
+            exit 1
+          fi
+          echo "OK: no personal osu! data tracked."
+
+  python:
+    name: Python ${{ matrix.python }}
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.14"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e "./core[dev]"
+      # ruff resolves config per-file by walking up to the nearest pyproject.toml,
+      # so it runs correctly from the repo root and will also cover hwtest/ and
+      # extensions/ once those exist.
+      - run: ruff check .
+      - run: ruff format --check .
+      # mypy and pytest read their config from the cwd's pyproject.toml, which
+      # lives in core/. Running them from the root would silently fall back to
+      # non-strict defaults.
+      - run: mypy
+        working-directory: core
+      - run: pytest -q
+        working-directory: core
+      # TODO: add `lint-imports` here in the same commit that creates
+      # osuforge/report/ — the contract is written out in core/pyproject.toml
+      # but stays commented until the modules it names exist.
+
+  rust:
+    name: Rust
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo fmt --all --check
+      - run: cargo clippy --workspace --all-targets -- -D warnings
+      - run: cargo test --workspace
+
+  diffcalc-accuracy:
+    name: diffcalc vs official osu! API
+    runs-on: windows-latest
+    # Needs OAuth credentials, so it is skipped on forks. This is the gate that
+    # keeps an independently implemented difficulty calculator honest: our star
+    # rating and difficulty attributes are compared against the official
+    # /beatmaps/{id}/attributes endpoint to 1e-6 relative error. A drift here
+    # means either we have a bug or upstream reworked pp.
+    if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Compare against official difficulty attributes
+        env:
+          OSU_CLIENT_ID: ${{ secrets.OSU_CLIENT_ID }}
+          OSU_CLIENT_SECRET: ${{ secrets.OSU_CLIENT_SECRET }}
+        run: |
+          if ("$env:OSU_CLIENT_ID" -eq "") {
+            Write-Host "::warning::OSU_CLIENT_ID not set - accuracy gate skipped."
+            exit 0
+          }
+          cargo test -p osu-forge-diffcalc --features official-oracle -- --ignored --nocapture

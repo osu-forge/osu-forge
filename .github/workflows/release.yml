@@ -1,0 +1,97 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag to build (must already exist)"
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build engine binary
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref }}
+
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Build release binaries
+        run: cargo build --release --workspace
+
+      - name: Stage artifacts
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force dist | Out-Null
+          Copy-Item target\release\osu-forge-engine.exe dist\
+          Copy-Item LICENSE, NOTICE, README.md dist\
+
+      # Code signing is the only mitigation that reliably works against the
+      # heuristic AV detections that affect every memory-reading tool. It also
+      # clears SmartScreen reputation warnings. SignPath provides free
+      # certificates to qualifying open-source projects.
+      #
+      # Until the certificate is provisioned, releases are unsigned and the
+      # published checksums are the only integrity check users have — so the
+      # checksum step below is not optional.
+      - name: Code sign
+        if: vars.SIGNPATH_ORGANIZATION_ID != ''
+        uses: signpath/github-action-submit-signing-request@v1
+        with:
+          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
+          organization-id: ${{ vars.SIGNPATH_ORGANIZATION_ID }}
+          project-slug: osu-forge
+          signing-policy-slug: release-signing
+          artifact-configuration-slug: engine
+          github-artifact-id: ${{ steps.upload.outputs.artifact-id }}
+          wait-for-completion: true
+          output-artifact-directory: dist
+
+      - name: Compute SHA-256 checksums
+        shell: pwsh
+        run: |
+          Get-ChildItem dist -File |
+            ForEach-Object { "{0}  {1}" -f (Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLower(), $_.Name } |
+            Out-File -Encoding utf8 dist\SHA256SUMS.txt
+          Get-Content dist\SHA256SUMS.txt
+
+      - id: upload
+        uses: actions/upload-artifact@v4
+        with:
+          name: osu-forge-windows-x64
+          path: dist/
+
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*
+          generate_release_notes: true
+          body: |
+            ## Verify before running
+
+            ```powershell
+            Get-FileHash .\osu-forge-engine.exe -Algorithm SHA256
+            ```
+
+            Compare against `SHA256SUMS.txt`. If it does not match, do not run the
+            file — report it as a security issue.
+
+            ## Antivirus
+
+            Memory-reading tools trip heuristic AV detection. If yours flags a
+            release whose checksum matches, please file an
+            [AV false positive report](https://github.com/osu-forge/osu-forge/issues/new?template=av_false_positive.yml)
+            — it includes the vendor submission steps, and a cleared detection
+            sticks across future releases.
+
+            osu-forge opens the game process with `PROCESS_VM_READ |
+            PROCESS_QUERY_INFORMATION` only. It never writes to osu! memory,
+            never synthesizes input, and never modifies game files.

@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Security vulnerability
+    url: https://github.com/osu-forge/osu-forge/security/advisories/new
+    about: Report privately, not as a public issue. See SECURITY.md for scope.
+  - name: Question or idea
+    url: https://github.com/osu-forge/osu-forge/discussions
+    about: Use Discussions for questions, feature ideas, and extension development.
