@@ -43,6 +43,9 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 - `osuforge.replay` — `.osr` parser: header, judgement counts, mods, and the
   LZMA frame stream with delta accumulation and the trailing seed frame
   separated out.
+- `osuforge.replay.frames` — marker stripping, key press/release extraction
+  with device attribution, and a timing uncertainty on every event. Unknown
+  uncertainty is reported as unknown rather than collapsed to zero.
 
 ### Changed
 - Integration tests are deselected by default and require an environment
