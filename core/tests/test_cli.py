@@ -143,13 +143,31 @@ class TestProfile:
     ) -> tuple[int, str, str]:
         return _run(["profile", "--path", str(tmp_path / "profile.json"), *args], capsys)
 
-    def test_an_empty_profile_says_how_to_fill_it(
+    def test_an_empty_profile_leads_with_the_one_number_most_mice_have(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:
+        # Most mice expose a single DPI and no cut-off setting at all. The
+        # detailed form is for the ones that expose more, and asking everyone
+        # for it makes a simple setup look like a misconfigured one.
         code, _, err = self.run(tmp_path, capsys)
         assert code == 0
-        assert "no mouse recorded" in err
-        assert "--dpi-x 1350 --dpi-y 1400" in err
+        assert err.index("--dpi 800") < err.index("--dpi-x")
+        assert "all most mice have" in err
+
+    def test_a_single_dpi_is_not_reported_as_two_axes(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        _, _, err = self.run(tmp_path, capsys, "--dpi", "800")
+        assert "800 DPI" in err
+        assert "horizontally" not in err, "one number should not be printed as two"
+        assert "6.25%" in err
+
+    def test_nothing_is_demanded_that_a_plain_mouse_cannot_answer(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        # An unset cut-off is a normal state, not an incomplete profile.
+        _, _, err = self.run(tmp_path, capsys, "--dpi", "800")
+        assert "no sensor cut-off" not in err
 
     def test_setting_both_axes_reports_the_step_on_each(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]

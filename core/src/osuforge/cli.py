@@ -435,17 +435,30 @@ def _profile(args: argparse.Namespace) -> int:
     if mouse is None:
         print("no mouse recorded.", file=sys.stderr)
         print("  forge profile --dpi 800", file=sys.stderr)
-        print("  forge profile --dpi-x 1350 --dpi-y 1400", file=sys.stderr)
+        print(
+            "\nOne number is all most mice have, and all this needs. The rest is for "
+            "mice that expose more, and leaving it unset costs precision in the advice "
+            "rather than making it wrong.",
+            file=sys.stderr,
+        )
+        print(
+            "  forge profile --dpi-x 1400 --dpi-y 1350   # separate DPI per axis", file=sys.stderr
+        )
+        print(
+            "  forge profile --asymmetric-cutoff 1       # sensor cut-off preset", file=sys.stderr
+        )
     else:
         print(f"mouse: {mouse.describe()}", file=sys.stderr)
         x, y = mouse.step_fraction()
-        print(f"  a 50-count DPI step is {x:.2%} horizontally, {y:.2%} vertically", file=sys.stderr)
+        if mouse.axes_differ:
+            print(
+                f"  a 50-count DPI step is {x:.2%} horizontally, {y:.2%} vertically",
+                file=sys.stderr,
+            )
+        else:
+            print(f"  a 50-count DPI step is {x:.2%}", file=sys.stderr)
 
-    if tracked is None:
-        print("no sensor cut-off recorded.", file=sys.stderr)
-        print("  forge profile --asymmetric-cutoff 1", file=sys.stderr)
-        print("  forge profile --cutoff-label Medium", file=sys.stderr)
-    else:
+    if tracked is not None:
         print(f"tracking: {tracked.describe()}", file=sys.stderr)
         if tracked.of_concern:
             print(
