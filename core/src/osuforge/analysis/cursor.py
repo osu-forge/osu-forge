@@ -24,13 +24,22 @@ across a difference rather than measure it.
 
 # The direction of travel is the intended one
 
-Travel is measured from the previous object's centre to this one — where the
-player had to go — rather than from the cursor's own velocity at the moment of
-the press. Both are meaningful and they answer different questions. The intended
-displacement is the one gain acts on: a gain error scales the movement the hand
-made toward a target, so the error it produces lies along that line. Cursor
-velocity at the press answers "were they still moving when they clicked", which
-is a timing question wearing a spatial disguise.
+Travel is measured from where the player was free to leave the previous object
+to this one — where they had to go — rather than from the cursor's own velocity
+at the moment of the press. Both are meaningful and they answer different
+questions. The intended displacement is the one gain acts on: a gain error
+scales the movement the hand made toward a target, so the error it produces
+lies along that line. Cursor velocity at the press answers "were they still
+moving when they clicked", which is a timing question wearing a spatial
+disguise.
+
+"Where they were free to leave" is not the previous object's own position when
+that object is a slider. The ball carries the cursor along the path, so the
+movement starts from the **tail**; taking the head points two in five movements
+on a normal map from the wrong origin. The same applies to the clock — a
+four-beat slider does not give the next object four beats of travel time, and
+measuring from its start time overstates the time available by an order of
+magnitude on a slow map.
 
 # What is deliberately excluded
 
@@ -125,7 +134,10 @@ class Landing:
     """
 
     travel: float
-    """Distance from the previous object's centre, in osu! pixels."""
+    """Distance from where the player left the previous object, in osu! pixels.
+
+    A slider's tail rather than its head — see the module docstring.
+    """
 
     heading: float
     """Direction of travel in radians, `atan2(dy, dx)` with y downward."""
@@ -133,8 +145,11 @@ class Landing:
     sector: Sector
 
     available: float
-    """Milliseconds from the previous object to this one — the time the player
-    had to cover `travel`."""
+    """Milliseconds the player had to cover `travel`.
+
+    Measured from when they were free to leave the previous object — its end
+    time, which for a slider is the tail rather than the head.
+    """
 
     peak_speed: float
     """Fastest cursor speed over the approach, in osu! pixels per millisecond."""
@@ -180,6 +195,25 @@ class LandingSet:
             return f"{len(self.landings)} landings"
         detail = ", ".join(f"{count} {reason}" for reason, count in sorted(self.skipped.items()))
         return f"{len(self.landings)} landings, {sum(self.skipped.values())} skipped ({detail})"
+
+
+def _departure(origin: diffcalc.HitObject) -> tuple[float, float]:
+    """Where the cursor was when it was free to leave the previous object.
+
+    For a circle that is the circle. For a slider it is the **tail**, not the
+    head: the ball has carried the cursor along the path, and the movement to
+    the next object starts from wherever it ended up. Taking the head instead
+    points two in five movements on a normal map from the wrong origin, which
+    corrupts the direction as well as the distance.
+
+    Odd slide counts finish at the far end and even ones come back to the
+    start, the same rule the path geometry uses for a slider's visual end.
+    """
+    if origin.kind is not diffcalc.ObjectKind.Slider or not origin.path:
+        return (origin.x, origin.y)
+    if origin.slides % 2 == 1:
+        return (origin.path[-2], origin.path[-1])
+    return (origin.path[0], origin.path[1])
 
 
 def _sector(heading: float) -> Sector:
@@ -231,8 +265,9 @@ def decompose(simulation: Simulation, played: diffcalc.Beatmap) -> LandingSet:
             skip("no press")
             continue
 
-        dx_travel = obj.x - origin.x
-        dy_travel = obj.y - origin.y
+        origin_x, origin_y = _departure(origin)
+        dx_travel = obj.x - origin_x
+        dy_travel = obj.y - origin_y
         travel = math.hypot(dx_travel, dy_travel)
         if travel < _MIN_TRAVEL:
             skip("stacked or repeated on one spot")
@@ -256,8 +291,14 @@ def decompose(simulation: Simulation, played: diffcalc.Beatmap) -> LandingSet:
         # rediscovered, because the convention is invisible in the arithmetic.
         across = dx * -uy + dy * ux
 
-        available = float(obj.time - origin.time)
-        start = bisect.bisect_left(times, origin.time)
+        # From when the player was free to leave, not from when the previous
+        # object started. A four-beat slider does not give the next object four
+        # beats of travel time — it gives whatever is left after the ball
+        # reaches the tail, and using the start time can overstate the time
+        # available by an order of magnitude on slow maps.
+        departure = origin.end_time
+        available = float(obj.time) - departure
+        start = bisect.bisect_left(times, departure)
         peak, total, samples = 0.0, 0.0, 0
         arrival: int | None = None
         inside_at_start = True

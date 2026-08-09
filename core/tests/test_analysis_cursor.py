@@ -190,6 +190,79 @@ class TestExclusions:
         ]
 
 
+class TestSliderOrigins:
+    """The movement to the next object starts from the tail, not the head."""
+
+    def sliders(self, objects: str, samples: list[tuple[int, float, float, int]]) -> LandingSet:
+        text = (
+            "osu file format v14\n"
+            "[General]\nMode: 0\nStackLeniency: 0.7\n"
+            "[Difficulty]\nCircleSize:4\nOverallDifficulty:8\nApproachRate:9\n"
+            "SliderMultiplier:1\nSliderTickRate:1\n"
+            "[TimingPoints]\n0,500,4,2,0,100,1,0\n"
+            "[HitObjects]\n" + objects
+        )
+        body = list(MARKERS)
+        previous = -1
+        for time, x, y, keys in samples:
+            body.append((time - previous, x, y, keys))
+            previous = time
+        played = diffcalc.Beatmap.from_bytes(text.encode())
+        return decompose(simulate(parse(build_replay(frames=body)), played), played)
+
+    def test_travel_starts_where_the_slider_ended(self) -> None:
+        # A 200 px slider from x=100 to x=300, then a circle at x=400. The
+        # player travels 100 px from the tail, not 300 px from the head, and
+        # measuring it from the head would report a jump three times as long.
+        result = self.sliders(
+            "100,192,1000,2,0,L|300:192,1,200\n400,192,3000,1,0\n",
+            [
+                (1000, 100, 192, K1),
+                (1500, 200, 192, K1),
+                (2000, 300, 192, K1),
+                (2100, 300, 192, 0),
+                (3000, 400, 192, K1),
+            ],
+        )
+        assert len(result.landings) == 1
+        assert result.landings[0].travel == pytest.approx(100.0, abs=1.0)
+
+    def test_an_even_slide_count_comes_back_to_the_head(self) -> None:
+        # Two traversals end where they started, so the movement is the full
+        # distance from the head after all. Getting this backwards misplaces
+        # the origin of every movement after a repeat slider.
+        result = self.sliders(
+            "100,192,1000,2,0,L|300:192,2,200\n400,192,4000,1,0\n",
+            [
+                (1000, 100, 192, K1),
+                (2000, 300, 192, K1),
+                (3000, 100, 192, K1),
+                (3100, 100, 192, 0),
+                (4000, 400, 192, K1),
+            ],
+        )
+        assert len(result.landings) == 1
+        assert result.landings[0].travel == pytest.approx(300.0, abs=1.0)
+
+    def test_the_clock_starts_at_the_tail_too(self) -> None:
+        # A long slider does not hand the next object its whole duration as
+        # travel time. Measuring from the start time overstates the time
+        # available by the length of the slider.
+        result = self.sliders(
+            "100,192,1000,2,0,L|300:192,1,200\n400,192,3000,1,0\n",
+            [
+                (1000, 100, 192, K1),
+                (1500, 200, 192, K1),
+                (2000, 300, 192, K1),
+                (2100, 300, 192, 0),
+                (3000, 400, 192, K1),
+            ],
+        )
+        landing = result.landings[0]
+        assert landing.available == pytest.approx(1000.0, abs=60.0), "3000 - the tail, not - 1000"
+        assert landing.available < 1500.0, "not the full 2000 ms from the slider's start"
+
+
 class TestKinematics:
     def test_travel_and_time_come_from_the_objects_not_the_cursor(self) -> None:
         result = landings(
