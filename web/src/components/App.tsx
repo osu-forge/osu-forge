@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { AnalysisPanel } from "@/components/Analysis";
 import { Playfield } from "@/components/Playfield";
 import { ErrorTimeline } from "@/components/ErrorTimeline";
 import { DEFAULT_LOCALE, detectLocale, translator, type Locale } from "@/i18n";
@@ -195,15 +196,22 @@ export function App({ token }: { token: string }) {
           <span className="eyebrow ml-auto">{t("app.advisory")}</span>
         </header>
 
-        <div className="min-h-0 flex-1">
-          {loaded && (
-            <Playfield
-              header={loaded.header}
-              samples={loaded.samples}
-              paths={loaded.paths}
-              clock={clock}
-            />
-          )}
+        <div className="grid min-h-0 flex-1 grid-cols-1 lg:grid-cols-[1fr_380px]">
+          <div className="min-h-0">
+            {loaded && (
+              <Playfield
+                header={loaded.header}
+                samples={loaded.samples}
+                paths={loaded.paths}
+                clock={clock}
+              />
+            )}
+          </div>
+          <aside className="hairline-l min-h-0 overflow-y-auto border-l border-hairline">
+            {loaded && (
+              <AnalysisPanel analysis={loaded.header.analysis} t={t} onSeek={seek} />
+            )}
+          </aside>
         </div>
 
         {loaded && (

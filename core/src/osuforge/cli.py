@@ -346,7 +346,7 @@ def _serve(args: argparse.Namespace) -> int:
     """Read the site and the replays, then hand both to the server and block."""
     import osu_forge_diffcalc as diffcalc
 
-    from osuforge.live.watch import BeatmapIndex
+    from osuforge.live.watch import BeatmapIndex, analyse
     from osuforge.replay.parse import ReplayParseError, parse_path
     from osuforge.replay.simulate import simulate
     from osuforge.server import (
@@ -357,6 +357,7 @@ def _serve(args: argparse.Namespace) -> int:
         load_site,
         serve,
     )
+    from osuforge.server.protocol import analysis_payload
 
     try:
         config_path = find_config(args.config)
@@ -412,11 +413,17 @@ def _serve(args: argparse.Namespace) -> int:
             plain = diffcalc.Beatmap.from_file(beatmap_path)
         except diffcalc.BeatmapError:
             return None
+        # The same analysis the static page showed. It returns a reason rather
+        # than None when it cannot run, and a play that cannot be analysed is
+        # still worth playing back — so the failure costs the numbers, not the
+        # replay.
+        play = analyse(path, index)
         return ReplayPayload.build(
             replay_name=path.name,
             beatmap=plain.with_mods(int(replay.mods)),
             simulation=simulate(replay, plain),
             rate=replay.rate,
+            analysis=None if isinstance(play, str) else analysis_payload(play),
         )
 
     # Newest first and capped: every payload stays resident for the life of the

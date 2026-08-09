@@ -48,6 +48,59 @@ export interface Judgement {
   aim: number | null;
 }
 
+export interface Finding {
+  feature: string;
+  label: string;
+  objects: number;
+  /** Share of the play's objects this group holds, 0 to 1. */
+  share_of_objects: number;
+  /** Share of the play's total accuracy shortfall that fell here.
+   *  Compared against `share_of_objects`: a group holding 8% of the objects
+   *  and 42% of the loss is doing five times its share of the damage; one
+   *  holding 8% of both is doing exactly its share and says nothing. */
+  share_of_loss: number;
+  accuracy: number;
+}
+
+export interface Break {
+  time: number;
+  kind: string;
+  combo: number;
+}
+
+export interface Analysis {
+  accuracy: number;
+  /** Real milliseconds, early negative. `null` when there were no usable hits. */
+  mean_error: number | null;
+  /** Ten times the standard deviation, as the score screen reports it. */
+  unstable_rate: number | null;
+  hits: number;
+  errors: number[];
+  aim_errors: number[];
+  /** Share of keyboard presses on the first key. 0.5 is even. */
+  key_balance: number | null;
+  presses: Record<string, number>;
+  /** Whether the simulation reproduced the game's own judgement counts. A play
+   *  it did not reproduce still has an unstable rate, and that rate describes
+   *  something other than what happened. */
+  agreement: string;
+  agreement_reason: string;
+  usable: boolean;
+  max_combo: number;
+  reported_max_combo: number;
+  sliderbreaks: number;
+  /** Why the slider-break count is being withheld, if it is. The detection is
+   *  known wrong against the header's max combo, so it is hidden with its
+   *  reason rather than shown as though it were sound. */
+  combo_caveat: string | null;
+  bpm: number;
+  length_ms: number;
+  object_count: number;
+  played_at: string;
+  findings: Finding[];
+  breaks: Break[];
+}
+
 export interface ReplayHeader {
   schema_version: number;
   replay: string;
@@ -67,6 +120,9 @@ export interface ReplayHeader {
     overall_difficulty: number;
     background: string | null;
   };
+  /** `null` when the play could not be analysed, so a page can tell that from
+   *  "analysed and found nothing". */
+  analysis: Analysis | null;
   /** Rounded 300/100/50 half-widths, map milliseconds. */
   windows: [number, number, number];
   counts: { "300": number; "100": number; "50": number; miss: number };

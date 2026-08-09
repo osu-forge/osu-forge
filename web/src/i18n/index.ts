@@ -45,6 +45,21 @@ const en = {
   "windows.miss": "Miss",
   "windows.legend": "Judgement windows, to scale",
 
+  "analysis.none": "This play could not be analysed. It can still be played back.",
+  "analysis.unreproduced":
+    "The simulation did not reproduce this play's judgement counts, so the numbers below describe something other than what happened.",
+  "analysis.accuracy": "Accuracy",
+  "analysis.unstableRate": "Unstable rate",
+  "analysis.spreadHint": "Spread. An offset does not narrow it.",
+  "analysis.meanError": "Mean error",
+  "analysis.biasHint": "Bias. This is what an offset moves.",
+  "analysis.combo": "Max combo",
+  "analysis.comboReported": "game reported {n}",
+  "analysis.whereLost": "Where the accuracy went",
+  "analysis.whereLostHint":
+    "The multiple is the share of the loss divided by the share of the objects. Above one, a group is costing more than its size predicts; at one it is doing exactly its share and says nothing.",
+  "analysis.breaks": "Combo breaks",
+
   "settings.heading": "Hardware",
   "settings.declared": "Declared, not measured — no file on disk records any of this.",
   "settings.dpi": "Mouse DPI",
@@ -89,6 +104,21 @@ const ko: Record<Key, string> = {
   "windows.50": "50",
   "windows.miss": "미스",
   "windows.legend": "판정 창, 실제 비율",
+
+  "analysis.none": "이 플레이는 분석하지 못했습니다. 재생은 가능합니다.",
+  "analysis.unreproduced":
+    "시뮬레이션이 이 플레이의 판정 수를 재현하지 못했습니다. 아래 숫자는 실제로 일어난 것과 다른 것을 설명합니다.",
+  "analysis.accuracy": "정확도",
+  "analysis.unstableRate": "불안정도(UR)",
+  "analysis.spreadHint": "산포. 오프셋으로는 좁혀지지 않습니다.",
+  "analysis.meanError": "평균 오차",
+  "analysis.biasHint": "편향. 오프셋이 움직이는 값입니다.",
+  "analysis.combo": "최대 콤보",
+  "analysis.comboReported": "게임 기록 {n}",
+  "analysis.whereLost": "정확도가 어디서 깎였나",
+  "analysis.whereLostHint":
+    "배수는 손실 비중을 오브젝트 비중으로 나눈 값입니다. 1을 넘으면 그 그룹이 크기가 예측하는 것보다 더 깎아먹고 있고, 1이면 딱 제 몫만큼이라 아무 의미도 없습니다.",
+  "analysis.breaks": "콤보 브레이크",
 
   "settings.heading": "하드웨어",
   "settings.declared": "측정이 아니라 선언한 값입니다 — 어느 파일에도 기록되어 있지 않습니다.",

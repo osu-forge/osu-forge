@@ -48,6 +48,7 @@ seconds.
 
 from __future__ import annotations
 
+import math
 import struct
 from dataclasses import dataclass
 from typing import Any
@@ -153,6 +154,84 @@ def objects_payload(beatmap: diffcalc.Beatmap) -> list[dict[str, Any]]:
     return payload
 
 
+_KIND_NAMES = {
+    diffcalc.ObjectKind.Circle: "circle",
+    diffcalc.ObjectKind.Slider: "slider",
+    diffcalc.ObjectKind.Spinner: "spinner",
+}
+
+
+def analysis_payload(play: Any) -> dict[str, Any]:
+    """One play's analysis, as the page needs it.
+
+    Everything here is already computed — this is a shape, not a calculation.
+    It travels in the header rather than behind its own endpoint because it is
+    a couple of kilobytes and because a list that shows the unstable rate would
+    otherwise need a request per row.
+
+    Two things are carried that a naive summary would drop, and both are the
+    difference between a number and an honest one:
+
+    `agreement` says whether the simulation reproduced the game's own
+    judgement counts. A play it did not reproduce still has an unstable rate,
+    and that rate describes something other than what happened.
+
+    `combo_caveat` is why the slider-break count is being withheld. The
+    detection is known wrong against the header's max combo, so the count is
+    hidden with its reason rather than shown as though it were sound.
+    """
+    return {
+        "accuracy": play.accuracy,
+        "mean_error": None if math.isnan(play.mean_error) else play.mean_error,
+        "unstable_rate": None if math.isnan(play.unstable_rate) else play.unstable_rate,
+        "hits": len(play.errors),
+        "errors": [round(error, 2) for error in play.errors],
+        "aim_errors": [round(value, 3) for value in play.aim_errors],
+        "key_balance": None if math.isnan(play.key_balance) else play.key_balance,
+        "presses": {str(button): count for button, count in play.presses.items()},
+        "agreement": str(play.agreement),
+        "agreement_reason": play.agreement_reason,
+        "usable": play.usable,
+        "max_combo": play.max_combo,
+        "reported_max_combo": play.reported_max_combo,
+        "sliderbreaks": play.sliderbreaks,
+        "combo_caveat": play.combo_caveat,
+        "bpm": play.bpm,
+        "length_ms": play.length_ms,
+        "object_count": play.object_count,
+        "played_at": play.played_at.isoformat(),
+        "findings": [
+            {
+                "feature": share.feature,
+                "label": share.label,
+                "objects": share.objects,
+                "share_of_objects": share.share_of_objects,
+                "share_of_loss": share.share_of_loss,
+                "accuracy": share.accuracy,
+            }
+            for share in play.findings()
+        ],
+        "breaks": [
+            {
+                "time": failure.time,
+                "kind": _KIND_NAMES.get(failure.kind, "circle"),
+                "grade": int(failure.grade),
+                "combo_lost": failure.combo_lost,
+                # How late, and how far off centre. A break with an error of
+                # +58 ms and a miss with no press at all are different
+                # mistakes, and the difference is the answer to why it broke.
+                "error": failure.error,
+                "aim_error": (
+                    None if failure.aim_error is None else round(failure.aim_error, 3)
+                ),
+                "parts_collected": failure.parts_collected,
+                "parts_total": failure.parts_total,
+            }
+            for failure in play.breaks
+        ],
+    }
+
+
 @dataclass(frozen=True, slots=True)
 class ReplayPayload:
     """Everything a renderer needs for one replay, ready to serialise."""
@@ -171,6 +250,7 @@ class ReplayPayload:
         beatmap: diffcalc.Beatmap,
         simulation: Simulation,
         rate: float,
+        analysis: dict[str, Any] | None = None,
     ) -> ReplayPayload:
         counts = simulation.counts()
         paths, _ = encode_paths(beatmap)
@@ -200,6 +280,9 @@ class ReplayPayload:
                 "50": counts[Grade.FIFTY],
                 "miss": counts[Grade.MISS],
             },
+            # Absent rather than empty when the analysis could not be run, so a
+            # page can tell "no findings" from "not analysed".
+            "analysis": analysis,
             "objects": objects_payload(beatmap),
             # Judgement per object, aligned with `objects` by position, so the
             # renderer can colour what happened without re-deriving it.
