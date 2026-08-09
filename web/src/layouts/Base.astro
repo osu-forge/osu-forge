@@ -22,14 +22,15 @@ const { title } = Astro.props;
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <!-- No external origins are reachable from this page, stated to the browser
-         as well as to the reader. `connect-src 'self'` is what keeps a future
-         component from quietly fetching something. -->
-    <meta
-      http-equiv="Content-Security-Policy"
-      content="default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; connect-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
-    />
+    <!-- The Content-Security-Policy is a response header, set in
+         osuforge/server/assets.py, not a meta element here. Two reasons, both
+         learned from a browser console: `frame-ancestors` is ignored in a meta
+         and it is the directive that stops this page being framed, and the
+         inline script Astro emits for hydration has to be allowed by its hash
+         — which the server computes from the page it is about to send, rather
+         than the policy being loosened to 'unsafe-inline' for every script. -->
     <meta name="referrer" content="no-referrer" />
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
     <title>{title}</title>
   </head>
   <body class="min-h-screen bg-canvas text-ink antialiased">

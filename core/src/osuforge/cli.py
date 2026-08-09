@@ -349,7 +349,14 @@ def _serve(args: argparse.Namespace) -> int:
     from osuforge.live.watch import BeatmapIndex
     from osuforge.replay.parse import ReplayParseError, parse_path
     from osuforge.replay.simulate import simulate
-    from osuforge.server import ReplayPayload, ServerError, SiteMissingError, load_site, serve
+    from osuforge.server import (
+        ReplayPayload,
+        ServerError,
+        SiteMissingError,
+        Watcher,
+        load_site,
+        serve,
+    )
 
     try:
         config_path = find_config(args.config)
@@ -377,38 +384,51 @@ def _serve(args: argparse.Namespace) -> int:
             return 2
 
     index = BeatmapIndex(songs_dir)
-    # Newest first and capped: every payload stays resident for the life of the
-    # process, so an unbounded scan would let however much someone has played
-    # decide the memory footprint.
-    found = sorted(replay_dir.glob("*.osr"), key=lambda p: p.stat().st_mtime, reverse=True)
     payloads: dict[str, Any] = {}
     skipped: dict[str, int] = {}
 
     def note(reason: str) -> None:
         skipped[reason] = skipped.get(reason, 0) + 1
 
-    for path in found[: args.limit]:
+    def prepare_replay(path: Path) -> ReplayPayload | None:
+        """Build one payload, or `None` if it cannot be read yet.
+
+        The same function serves startup and the watcher, so a play that
+        appears while the page is open is prepared exactly the way the ones
+        loaded at startup were. Two code paths here would drift, and the
+        difference would only show as one play looking unlike the rest.
+        """
         try:
             replay = parse_path(path)
         except ReplayParseError:
-            note("unreadable")
-            continue
+            # Also the ordinary case for a file osu! is still writing, so the
+            # caller decides whether to retry rather than this treating it as
+            # corrupt.
+            return None
         beatmap_path = index.get(replay.beatmap_hash)
         if beatmap_path is None:
-            note("beatmap not found")
-            continue
+            return None
         try:
             plain = diffcalc.Beatmap.from_file(beatmap_path)
         except diffcalc.BeatmapError:
-            note("beatmap unreadable")
-            continue
-
-        payloads[path.name] = ReplayPayload.build(
+            return None
+        return ReplayPayload.build(
             replay_name=path.name,
             beatmap=plain.with_mods(int(replay.mods)),
             simulation=simulate(replay, plain),
             rate=replay.rate,
         )
+
+    # Newest first and capped: every payload stays resident for the life of the
+    # process, so an unbounded scan would let however much someone has played
+    # decide the memory footprint.
+    found = sorted(replay_dir.glob("*.osr"), key=lambda p: p.stat().st_mtime, reverse=True)
+    for path in found[: args.limit]:
+        payload = prepare_replay(path)
+        if payload is None:
+            note("could not be read")
+            continue
+        payloads[path.name] = payload
 
     print(f"site:     {site.root}", file=sys.stderr)
     print(f"beatmaps: {len(index)} indexed", file=sys.stderr)
@@ -420,11 +440,27 @@ def _serve(args: argparse.Namespace) -> int:
         print("error: nothing to serve", file=sys.stderr)
         return 2
 
+    async def on_new_replay(path: Path) -> dict[str, Any] | None:
+        payload = prepare_replay(path)
+        if payload is None:
+            return None
+        payloads[path.name] = payload
+        # The header only. It is a few kilobytes and it is everything the list
+        # needs; the frames are half a megabyte and are not wanted until
+        # someone selects this play.
+        return {"event": "replay", "name": path.name, "header": payload.header}
+
+    watcher = Watcher(folder=replay_dir, build=on_new_replay)
+    # Everything already on disk is known, so opening the page is not a flood
+    # of plays from last week.
+    watcher.prime(path.name for path in found)
+
     port = args.port or DEFAULT_PORT
     print(f"\n  http://127.0.0.1:{port}/\n", file=sys.stderr)
+    print("Leave it open while you play; new plays appear without a reload.", file=sys.stderr)
     print("Ctrl+C to stop. Nothing is left listening or written afterwards.", file=sys.stderr)
     try:
-        serve(site=site, payloads=payloads, port=port)
+        serve(site=site, payloads=payloads, port=port, watcher=watcher)
     except ServerError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 2

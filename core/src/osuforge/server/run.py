@@ -32,6 +32,8 @@ one line of this file that undid the rest of it.
 
 from __future__ import annotations
 
+import asyncio
+import contextlib
 import errno
 import socket
 from collections.abc import Iterator
@@ -41,6 +43,7 @@ from typing import Any
 
 from osuforge.server.app import build_app
 from osuforge.server.assets import Site
+from osuforge.server.live import Broadcaster, Watcher
 from osuforge.server.security import (
     DEFAULT_PORT,
     RESERVED_PORTS,
@@ -124,22 +127,48 @@ def serve(
     port: int = DEFAULT_PORT,
     runtime_path: Path | None = None,
     log_level: str = "warning",
+    watcher: Watcher | None = None,
 ) -> None:
     """Run until interrupted. Blocks.
 
     `site` and `payloads` are both read before this is called, matching
     :func:`osuforge.server.app.build_app`: a server that goes looking at the
     filesystem when asked is a server whose reach is decided by whoever asks.
+
+    `watcher` is the one exception, and a deliberate one: watching for a new
+    play is the whole point of leaving the page open. It polls a folder chosen
+    when the command started, not one a request can name.
     """
     import uvicorn
 
     with prepare(port=port, runtime_path=runtime_path) as access:
+        broadcaster = Broadcaster()
         app = build_app(
             access,
             page=site.page(access.token.value),
             payloads=payloads,
             assets=site.assets,
+            broadcaster=broadcaster,
+            policy=site.policy(),
         )
+
+        if watcher is not None:
+
+            @app.on_event("startup")
+            async def _start_watching() -> None:
+                # Started here rather than before uvicorn, because the loop it
+                # runs on is the one uvicorn creates.
+                task = asyncio.get_running_loop().create_task(watcher.run(broadcaster))
+                app.state.watcher_task = task
+
+            @app.on_event("shutdown")
+            async def _stop_watching() -> None:
+                task = getattr(app.state, "watcher_task", None)
+                if task is not None:
+                    task.cancel()
+                    with contextlib.suppress(asyncio.CancelledError):
+                        await task
+
         uvicorn.run(
             app,
             host=INTERFACE,

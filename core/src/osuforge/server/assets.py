@@ -30,7 +30,10 @@ resident in the asset table.
 
 from __future__ import annotations
 
+import base64
+import hashlib
 import os
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -77,8 +80,45 @@ class Site:
     skipped: dict[str, int] = field(default_factory=dict)
     """Extensions found but not served, by count."""
 
+    script_hashes: tuple[str, ...] = ()
+    """`sha256-…` for every inline `<script>` in the page.
+
+    Astro emits a small inline script to start hydration, and a policy of
+    `default-src 'self'` blocks it — correctly, since the policy cannot tell
+    that script apart from an injected one. The alternatives are
+    `'unsafe-inline'`, which turns the protection off for every script, or
+    naming the exact contents. Hashing costs nothing here because the page is
+    already in memory, and it keeps the policy meaning what it says.
+    """
+
     def page(self, token: str) -> str:
         return self.index.replace(_TOKEN_PLACEHOLDER, token)
+
+    def policy(self) -> str:
+        """The Content-Security-Policy for this site.
+
+        Delivered as a header rather than a `<meta>`: `frame-ancestors` is
+        ignored in a meta element, which browsers say out loud, and it is the
+        directive that stops this page being framed by something else.
+        """
+        scripts = " ".join(f"'{value}'" for value in self.script_hashes)
+        return "; ".join(
+            [
+                "default-src 'self'",
+                f"script-src 'self' {scripts}".rstrip(),
+                # Tailwind emits a style element, and hashing those would have
+                # to be redone on every rebuild for no gain: a stylesheet
+                # cannot exfiltrate anything with connect-src locked down.
+                "style-src 'self' 'unsafe-inline'",
+                "img-src 'self' data:",
+                "font-src 'self'",
+                "connect-src 'self'",
+                "base-uri 'none'",
+                "form-action 'none'",
+                "frame-ancestors 'none'",
+                "object-src 'none'",
+            ]
+        )
 
     @property
     def carries_token_placeholder(self) -> bool:
@@ -140,4 +180,32 @@ def load_site(root: Path | None = None) -> Site:
         url = "/" + path.relative_to(target).as_posix()
         assets[url] = (path.read_bytes(), content_type)
 
-    return Site(index=index, assets=assets, root=target, skipped=skipped)
+    return Site(
+        index=index,
+        assets=assets,
+        root=target,
+        skipped=skipped,
+        script_hashes=inline_script_hashes(index),
+    )
+
+
+# Inline scripts only — one with a `src` is fetched and covered by 'self'.
+_INLINE_SCRIPT = re.compile(
+    r"<script(?![^>]*\bsrc=)[^>]*>(.*?)</script\s*>", re.DOTALL | re.IGNORECASE
+)
+
+
+def inline_script_hashes(html: str) -> tuple[str, ...]:
+    """`sha256-…` for each inline script, in document order.
+
+    The hash covers the element's exact contents, so it has to be taken from
+    the text that is actually served. Deduplicated because two identical
+    scripts hash the same and a repeated source directive is noise.
+    """
+    seen: list[str] = []
+    for match in _INLINE_SCRIPT.finditer(html):
+        digest = hashlib.sha256(match.group(1).encode("utf-8")).digest()
+        value = f"sha256-{base64.b64encode(digest).decode('ascii')}"
+        if value not in seen:
+            seen.append(value)
+    return tuple(seen)

@@ -2,7 +2,13 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Playfield } from "@/components/Playfield";
 import { ErrorTimeline } from "@/components/ErrorTimeline";
 import { DEFAULT_LOCALE, detectLocale, translator, type Locale } from "@/i18n";
-import { client, ProtocolError, type ReplayHeader, type Samples } from "@/lib/protocol";
+import {
+  client,
+  ProtocolError,
+  type Entry,
+  type ReplayHeader,
+  type Samples,
+} from "@/lib/protocol";
 
 /**
  * The one island on the page.
@@ -24,8 +30,13 @@ export function App({ token }: { token: string }) {
   const [locale, setLocale] = useState<Locale>(DEFAULT_LOCALE);
   const t = useMemo(() => translator(locale), [locale]);
 
-  const [entries, setEntries] = useState<{ name: string; header: ReplayHeader }[] | null>(null);
+  const [entries, setEntries] = useState<Entry[] | null>(null);
   const [selected, setSelected] = useState<string | null>(null);
+  /** The most recent play that arrived while the page was open, marked so it
+   *  is findable without stealing the selection from whatever is being
+   *  watched. Switching for them would interrupt exactly the review they left
+   *  the page open to do. */
+  const [arrived, setArrived] = useState<string | null>(null);
   const [loaded, setLoaded] = useState<Loaded | null>(null);
   const [failure, setFailure] = useState<string | null>(null);
 
@@ -53,6 +64,21 @@ export function App({ token }: { token: string }) {
         );
       });
   }, [api, t]);
+
+  // A play that finishes while the page is open is inserted, and nothing else
+  // moves. That is the whole difference from a page that reloads itself: the
+  // scroll position, the open selection and the playback clock all survive,
+  // and those are what made the reloading version unusable.
+  useEffect(() => {
+    return api.watch((entry) => {
+      setEntries((current) => {
+        const existing = current ?? [];
+        if (existing.some((item) => item.name === entry.name)) return existing;
+        return [entry, ...existing];
+      });
+      setArrived(entry.name);
+    });
+  }, [api]);
 
   useEffect(() => {
     if (!selected) return;
@@ -140,9 +166,16 @@ export function App({ token }: { token: string }) {
             <div className="truncate text-ink">
               {entry.header.beatmap.artist} — {entry.header.beatmap.title}
             </div>
-            <div className="eyebrow mt-xxs truncate">
-              [{entry.header.beatmap.version}] ·{" "}
-              {t("replays.misses", { n: entry.header.counts.miss })}
+            <div className="eyebrow mt-xxs flex items-center gap-sm truncate">
+              <span className="truncate">
+                [{entry.header.beatmap.version}] ·{" "}
+                {t("replays.misses", { n: entry.header.counts.miss })}
+              </span>
+              {entry.name === arrived && entry.name !== selected && (
+                <span className="rounded-pill border border-hairline px-sm text-[color:var(--color-accent-breeze)]">
+                  {t("replays.new")}
+                </span>
+              )}
             </div>
           </button>
         ))}

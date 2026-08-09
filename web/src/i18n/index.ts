@@ -30,6 +30,7 @@ const en = {
   "replays.loading": "Loading…",
   "replays.count": "{n} replay(s)",
   "replays.misses": "{n} miss",
+  "replays.new": "new",
 
   "player.play": "Play",
   "player.pause": "Pause",
@@ -74,6 +75,7 @@ const ko: Record<Key, string> = {
   "replays.loading": "불러오는 중…",
   "replays.count": "리플레이 {n}개",
   "replays.misses": "미스 {n}",
+  "replays.new": "새 플레이",
 
   "player.play": "재생",
   "player.pause": "일시정지",

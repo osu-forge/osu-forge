@@ -141,10 +141,20 @@ export function sampleAt(t: Int32Array, time: number): number {
   return found;
 }
 
-export interface Client {
-  list(): Promise<{ name: string; header: ReplayHeader }[]>;
-  load(name: string): Promise<{ header: ReplayHeader; samples: Samples; paths: Float32Array }>;
+export interface Entry {
+  name: string;
+  header: ReplayHeader;
 }
+
+export interface Client {
+  list(): Promise<Entry[]>;
+  load(name: string): Promise<{ header: ReplayHeader; samples: Samples; paths: Float32Array }>;
+  /** Watch for plays that finish while the page is open. Returns a closer. */
+  watch(onReplay: (entry: Entry) => void): () => void;
+}
+
+/** The subprotocol the token rides on. A browser cannot set a header here. */
+const TOKEN_SUBPROTOCOL = "osu-forge-token.";
 
 /**
  * Talks to the local server.
@@ -181,10 +191,52 @@ export function client(token: string, origin = ""): Client {
 
   return {
     async list() {
-      const { replays } = await json<{ replays: { name: string; header: ReplayHeader }[] }>(
-        "/api/replays",
-      );
+      const { replays } = await json<{ replays: Entry[] }>("/api/replays");
       return replays;
+    },
+
+    watch(onReplay: (entry: Entry) => void) {
+      // Reconnecting rather than giving up: the server restarting is the
+      // ordinary reason this drops, and a page that silently stops updating
+      // after that is the failure this whole feature exists to remove. The
+      // delay backs off so a server that is gone for good is not polled hard.
+      let socket: WebSocket | null = null;
+      let timer: number | undefined;
+      let delay = 1000;
+      let closed = false;
+
+      const connect = () => {
+        if (closed) return;
+        const url = new URL("/ws", location.origin);
+        url.protocol = location.protocol === "https:" ? "wss:" : "ws:";
+        socket = new WebSocket(url, [`${TOKEN_SUBPROTOCOL}${token}`]);
+
+        socket.addEventListener("open", () => {
+          delay = 1000;
+        });
+        socket.addEventListener("message", (event) => {
+          if (typeof event.data !== "string") return;
+          try {
+            const message = JSON.parse(event.data) as { event?: string } & Entry;
+            if (message.event === "replay" && message.header) onReplay(message);
+          } catch {
+            // A frame this page does not understand is not a reason to tear
+            // down a connection that is otherwise working.
+          }
+        });
+        socket.addEventListener("close", () => {
+          if (closed) return;
+          timer = window.setTimeout(connect, delay);
+          delay = Math.min(delay * 2, 30_000);
+        });
+      };
+
+      connect();
+      return () => {
+        closed = true;
+        window.clearTimeout(timer);
+        socket?.close();
+      };
     },
     async load(name: string) {
       const header = await json<ReplayHeader>(`/api/replays/${name}/header`);

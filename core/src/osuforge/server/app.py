@@ -22,6 +22,7 @@ from typing import Any
 from fastapi import FastAPI, HTTPException, Request, WebSocket
 from fastapi.responses import HTMLResponse, JSONResponse, Response
 
+from osuforge.server.live import Broadcaster
 from osuforge.server.security import Access
 
 __all__ = ["build_app"]
@@ -58,6 +59,8 @@ def build_app(
     page: str,
     payloads: dict[str, Any],
     assets: dict[str, tuple[bytes, str]] | None = None,
+    broadcaster: Broadcaster | None = None,
+    policy: str | None = None,
 ) -> FastAPI:
     """Assemble the server.
 
@@ -67,9 +70,14 @@ def build_app(
     server whose reach is decided by whatever asks it — and with the built site
     already in memory, path traversal has no mechanism to exist rather than
     being something a filter has to catch.
+
+    `broadcaster` is where connected sockets are registered so a watcher can
+    push a new play to them. Optional: without one the socket still answers
+    requests and simply never volunteers anything.
     """
     app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
     static = assets or {}
+    listeners = broadcaster or Broadcaster()
 
     @app.middleware("http")
     async def guard(
@@ -97,6 +105,12 @@ def build_app(
         # response — which is the thing being prevented.
         response.headers["X-Content-Type-Options"] = "nosniff"
         response.headers["Cache-Control"] = "no-store"
+        if policy:
+            # As a header, not a meta element. `frame-ancestors` is ignored in
+            # a meta and it is the directive that stops this page being framed,
+            # so the meta form quietly protects less than it appears to.
+            response.headers["Content-Security-Policy"] = policy
+        response.headers["Referrer-Policy"] = "no-referrer"
         return response
 
     @app.get("/", response_class=HTMLResponse)
@@ -154,6 +168,7 @@ def build_app(
         # Echoing the subprotocol back is required, or the browser rejects the
         # connection it just opened.
         await websocket.accept(subprotocol=f"{_TOKEN_SUBPROTOCOL}{presented}")
+        listeners.add(websocket)
         try:
             while True:
                 request = await websocket.receive_json()
@@ -168,6 +183,12 @@ def build_app(
             # A closed socket arrives as an exception. Nothing here owns state
             # that needs unwinding, so the connection simply ends.
             return
+        finally:
+            # Unregistered on every path, including the one that returns above.
+            # A socket left in the set is one the broadcaster tries to write to
+            # for the rest of the run, and it only discovers the problem by
+            # failing.
+            listeners.discard(websocket)
 
     # Registered last, deliberately: a catch-all declared earlier would shadow
     # every named route above it. The lookup is a dict built before the socket
