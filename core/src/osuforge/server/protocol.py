@@ -221,9 +221,7 @@ def analysis_payload(play: Any) -> dict[str, Any]:
                 # +58 ms and a miss with no press at all are different
                 # mistakes, and the difference is the answer to why it broke.
                 "error": failure.error,
-                "aim_error": (
-                    None if failure.aim_error is None else round(failure.aim_error, 3)
-                ),
+                "aim_error": (None if failure.aim_error is None else round(failure.aim_error, 3)),
                 "parts_collected": failure.parts_collected,
                 "parts_total": failure.parts_total,
             }
