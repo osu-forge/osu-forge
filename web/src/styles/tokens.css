@@ -1,0 +1,145 @@
+/*
+ * Design tokens.
+ *
+ * Taken from X-GIS `site/DESIGN.md`, which is the design language this project
+ * was asked to follow. Tailwind v4 reads a `@theme` block directly, so the
+ * tokens are the configuration rather than being copied into a JS file that
+ * then has to be kept in step with them.
+ *
+ * Three rules from that document shape everything below and are easy to undo by
+ * accident:
+ *
+ *   1. Hairlines, never shadows. Separation is a 1px border in `--color-hairline`.
+ *      A `box-shadow` anywhere in this project is a mistake.
+ *   2. No bold. Weight 400 throughout; emphasis comes from size and from
+ *      negative letter-spacing at display sizes.
+ *   3. Pills are fully round (9999px) and cards are 8px. There is no third radius.
+ *
+ * Universal Sans is the display face in the original and is commercially
+ * licensed, so it is not used here. Inter and Geist Mono are OFL-1.1 and are
+ * bundled as npm packages rather than fetched from a CDN — this page must make
+ * no external request, which is asserted in the server tests.
+ */
+
+@import "tailwindcss";
+
+@theme {
+  /* Colours ------------------------------------------------------------- */
+  --color-canvas: #0a0a0a;
+  --color-canvas-soft: #1a1c20;
+  --color-canvas-card: #191919;
+  --color-canvas-mid: #363a3f;
+  --color-hairline: #212327;
+
+  --color-ink: #ffffff;
+  --color-ink-hover: #fafaf7;
+  --color-body: #dadbdf;
+  --color-body-mid: #7d8187;
+  --color-mute: #7d8187;
+
+  --color-accent-sunset: #ff7a17;
+  --color-accent-sunset-soft: #ffc285;
+  --color-accent-dusk: #7c3aed;
+  --color-accent-twilight: #c4b5fd;
+  --color-accent-breeze: #a0c3ec;
+  --color-accent-midnight: #0d1726;
+
+  /* Judgement colours are not in the source document — they are this
+   * project's own, chosen to sit inside the palette rather than beside it.
+   * A 300 takes the breeze blue, a miss the sunset orange, so the two ends of
+   * the scale are the two accents the language already has. */
+  --color-judge-300: #a0c3ec;
+  --color-judge-100: #c4b5fd;
+  --color-judge-50: #ffc285;
+  --color-judge-miss: #ff7a17;
+
+  /* Type ---------------------------------------------------------------- */
+  --font-sans: "Inter", system-ui, -apple-system, sans-serif;
+  --font-mono: "Geist Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+
+  --text-display-md: 48px;
+  --text-display-md--line-height: 48px;
+  --text-display-md--letter-spacing: -1.2px;
+  --text-display-sm: 32px;
+  --text-display-sm--line-height: 36px;
+  --text-display-sm--letter-spacing: -0.6px;
+  --text-display-xs: 20px;
+  --text-display-xs--line-height: 28px;
+  --text-body-lg: 18px;
+  --text-body-lg--line-height: 28px;
+  --text-body-md: 16px;
+  --text-body-md--line-height: 24px;
+  --text-body-sm: 14px;
+  --text-body-sm--line-height: 20px;
+  --text-caption: 14px;
+  --text-caption--line-height: 20px;
+  --text-caption--letter-spacing: 1.4px;
+  --text-caption-sm: 12px;
+  --text-caption-sm--line-height: 16px;
+  --text-caption-sm--letter-spacing: 1.2px;
+
+  /* Spacing — the 4px scale from the source document. ---------------------- */
+  --spacing-xxs: 2px;
+  --spacing-xs: 4px;
+  --spacing-sm: 8px;
+  --spacing-md: 12px;
+  --spacing-lg: 16px;
+  --spacing-xl: 24px;
+  --spacing-2xl: 32px;
+  --spacing-3xl: 48px;
+  --spacing-4xl: 64px;
+
+  --radius-sm: 8px;
+  --radius-pill: 9999px;
+}
+
+@layer base {
+  :root {
+    color-scheme: dark;
+  }
+
+  html {
+    background: var(--color-canvas);
+    color: var(--color-ink);
+    font-family: var(--font-sans);
+    font-weight: 400;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /* Weight 400 everywhere. Headings inherit it rather than being reset per
+   * element, so adding a heading cannot reintroduce bold by omission. */
+  h1,
+  h2,
+  h3,
+  h4,
+  strong,
+  b {
+    font-weight: 400;
+  }
+
+  ::selection {
+    background: var(--color-accent-breeze);
+    color: var(--color-canvas);
+  }
+}
+
+@utility eyebrow {
+  font-family: var(--font-mono);
+  font-size: var(--text-caption-sm);
+  line-height: var(--text-caption-sm--line-height);
+  letter-spacing: var(--text-caption-sm--letter-spacing);
+  text-transform: uppercase;
+  color: var(--color-mute);
+}
+
+@utility hairline-t {
+  border-top: 1px solid var(--color-hairline);
+}
+
+@utility hairline-b {
+  border-bottom: 1px solid var(--color-hairline);
+}
+
+@utility hairline-r {
+  border-right: 1px solid var(--color-hairline);
+}

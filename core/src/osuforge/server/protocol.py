@@ -25,6 +25,18 @@ Times are absolute rather than deltas for the same reason: a renderer seeking to
 2:14 does a binary search on the array it already has, and delta encoding would
 make it walk from the start.
 
+# Slider bodies are a second buffer
+
+For the same reason, and more sharply. A map's slider paths are on the order of
+a hundred thousand points; as JSON that is most of a megabyte of decimal text
+to describe geometry the GPU wants as a flat float array anyway. They travel as
+one `float32` blob of interleaved `x, y`, and each slider in the header carries
+the offset and length of its own run.
+
+Two buffers rather than one because they change on different schedules: the
+frames belong to a replay and the paths belong to a beatmap, so a client
+comparing two attempts at the same map fetches the paths once.
+
 # Map time throughout
 
 Every time in this protocol is map time — what the song is at, not what the
@@ -47,18 +59,29 @@ from osuforge.replay.simulate import Grade, Simulation
 
 __all__ = [
     "FRAME_STRUCT",
+    "PATH_POINT_BYTES",
     "SAMPLE_BYTES",
     "SCHEMA_VERSION",
     "ReplayPayload",
     "encode_frames",
+    "encode_paths",
     "objects_payload",
 ]
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
+"""Raised from 1 when slider paths were added.
+
+The header gained `paths` and each slider object gained `p` and `slides`, so a
+client written against 1 would draw sliders as circles rather than fail — which
+is exactly the case a version number has to make visible.
+"""
 
 FRAME_STRUCT = struct.Struct("<iffB")
 SAMPLE_BYTES = FRAME_STRUCT.size
 assert SAMPLE_BYTES == 13
+
+PATH_POINT_BYTES = 8
+"""One `float32` pair. The unit of the slider path buffer."""
 
 
 def encode_frames(frames: list[ReplayFrame]) -> bytes:
@@ -71,6 +94,29 @@ def encode_frames(frames: list[ReplayFrame]) -> bytes:
     return bytes(buffer)
 
 
+def encode_paths(beatmap: diffcalc.Beatmap) -> tuple[bytes, list[tuple[int, int]]]:
+    """Pack every slider body into one buffer, and say where each one sits.
+
+    Returns the blob and, per object in beatmap order, `(offset, count)` in
+    points — `(0, 0)` for anything that is not a slider. Positions come from the
+    bindings already trimmed to the declared length and already carrying the
+    stack offset, so nothing here reinterprets the geometry.
+    """
+    blob = bytearray()
+    spans: list[tuple[int, int]] = []
+    points = 0
+    for obj in beatmap.objects:
+        path = obj.path
+        if not path:
+            spans.append((0, 0))
+            continue
+        count = len(path) // 2
+        blob.extend(struct.pack(f"<{len(path)}f", *path))
+        spans.append((points, count))
+        points += count
+    return bytes(blob), spans
+
+
 def objects_payload(beatmap: diffcalc.Beatmap) -> list[dict[str, Any]]:
     """Hit objects, as the renderer needs them.
 
@@ -78,18 +124,21 @@ def objects_payload(beatmap: diffcalc.Beatmap) -> list[dict[str, Any]]:
     and a replay drawn against the file positions would show the cursor missing
     things it hit.
 
-    Slider paths are **not** here yet. The geometry lives in the Rust layer and
-    is not exposed through the bindings, so a slider arrives as its head and its
-    duration and will draw as a circle that lasts. That is a gap rather than a
-    decision, and it is better stated than quietly rendered wrong.
+    A slider carries `p` — its `[offset, count]` in the path buffer — and
+    `slides`. Both are needed to draw it: the body comes from the buffer, and
+    the slide count decides which end the ball is at when the next object
+    begins, so a renderer without it puts every repeat slider's ball on the
+    wrong side.
     """
     kinds = {
         diffcalc.ObjectKind.Circle: "circle",
         diffcalc.ObjectKind.Slider: "slider",
         diffcalc.ObjectKind.Spinner: "spinner",
     }
-    return [
-        {
+    _, spans = encode_paths(beatmap)
+    payload: list[dict[str, Any]] = []
+    for obj, span in zip(beatmap.objects, spans, strict=True):
+        entry: dict[str, Any] = {
             "t": obj.time,
             "end": obj.end_time,
             "x": round(obj.x, 2),
@@ -97,8 +146,11 @@ def objects_payload(beatmap: diffcalc.Beatmap) -> list[dict[str, Any]]:
             "kind": kinds[obj.kind],
             "combo": obj.new_combo,
         }
-        for obj in beatmap.objects
-    ]
+        if obj.kind is diffcalc.ObjectKind.Slider:
+            entry["p"] = list(span)
+            entry["slides"] = obj.slides
+        payload.append(entry)
+    return payload
 
 
 @dataclass(frozen=True, slots=True)
@@ -107,6 +159,9 @@ class ReplayPayload:
 
     header: dict[str, Any]
     frames: bytes
+
+    paths: bytes = b""
+    """Slider bodies, interleaved `float32` x, y. Indexed by each slider's `p`."""
 
     @classmethod
     def build(
@@ -118,12 +173,15 @@ class ReplayPayload:
         rate: float,
     ) -> ReplayPayload:
         counts = simulation.counts()
+        paths, _ = encode_paths(beatmap)
         header = {
             "schema_version": SCHEMA_VERSION,
             "replay": replay_name,
             "rate": rate,
             "sample_bytes": SAMPLE_BYTES,
             "sample_count": len(simulation.frames.frames),
+            "path_point_bytes": PATH_POINT_BYTES,
+            "path_points": len(paths) // PATH_POINT_BYTES,
             "beatmap": {
                 "artist": beatmap.artist,
                 "title": beatmap.title,
@@ -154,4 +212,8 @@ class ReplayPayload:
                 for hit in simulation.hits
             ],
         }
-        return cls(header=header, frames=encode_frames(simulation.frames.frames))
+        return cls(
+            header=header,
+            frames=encode_frames(simulation.frames.frames),
+            paths=paths,
+        )

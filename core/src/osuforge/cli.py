@@ -32,6 +32,7 @@ from osuforge.probes.base import ProbeResult
 from osuforge.probes.collect import collect_probes
 from osuforge.rules import ALL_RULES, CONFIG_ONLY_RULES, RuleContext, run_rules
 from osuforge.rules.engine import Rule
+from osuforge.server.security import DEFAULT_PORT
 from osuforge.store import StoreError, default_db_path, open_store
 from osuforge.store import profile as store_profile
 
@@ -341,6 +342,97 @@ def _scan(args: argparse.Namespace) -> int:
     return 0
 
 
+def _serve(args: argparse.Namespace) -> int:
+    """Read the site and the replays, then hand both to the server and block."""
+    import osu_forge_diffcalc as diffcalc
+
+    from osuforge.live.watch import BeatmapIndex
+    from osuforge.replay.parse import ReplayParseError, parse_path
+    from osuforge.replay.simulate import simulate
+    from osuforge.server import ReplayPayload, ServerError, SiteMissingError, load_site, serve
+
+    try:
+        config_path = find_config(args.config)
+    except ConfigNotFoundError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
+
+    try:
+        site = load_site(args.site)
+    except SiteMissingError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
+    if not site.carries_token_placeholder:
+        # The page would then fetch without a token and fail on every request,
+        # which reads as a server fault rather than a build fault.
+        print("error: the built page has no token placeholder; rebuild web/", file=sys.stderr)
+        return 2
+
+    install = config_path.parent
+    replay_dir = args.replays or install / "Data" / "r"
+    songs_dir = args.songs or install / "Songs"
+    for label, folder in (("replay", replay_dir), ("songs", songs_dir)):
+        if not folder.is_dir():
+            print(f"error: no {label} folder at {folder}", file=sys.stderr)
+            return 2
+
+    index = BeatmapIndex(songs_dir)
+    # Newest first and capped: every payload stays resident for the life of the
+    # process, so an unbounded scan would let however much someone has played
+    # decide the memory footprint.
+    found = sorted(replay_dir.glob("*.osr"), key=lambda p: p.stat().st_mtime, reverse=True)
+    payloads: dict[str, Any] = {}
+    skipped: dict[str, int] = {}
+
+    def note(reason: str) -> None:
+        skipped[reason] = skipped.get(reason, 0) + 1
+
+    for path in found[: args.limit]:
+        try:
+            replay = parse_path(path)
+        except ReplayParseError:
+            note("unreadable")
+            continue
+        beatmap_path = index.get(replay.beatmap_hash)
+        if beatmap_path is None:
+            note("beatmap not found")
+            continue
+        try:
+            plain = diffcalc.Beatmap.from_file(beatmap_path)
+        except diffcalc.BeatmapError:
+            note("beatmap unreadable")
+            continue
+
+        payloads[path.name] = ReplayPayload.build(
+            replay_name=path.name,
+            beatmap=plain.with_mods(int(replay.mods)),
+            simulation=simulate(replay, plain),
+            rate=replay.rate,
+        )
+
+    print(f"site:     {site.root}", file=sys.stderr)
+    print(f"beatmaps: {len(index)} indexed", file=sys.stderr)
+    print(f"replays:  {len(payloads)} prepared", file=sys.stderr)
+    if skipped:
+        detail = ", ".join(f"{count} {reason}" for reason, count in sorted(skipped.items()))
+        print(f"skipped:  {detail}", file=sys.stderr)
+    if not payloads:
+        print("error: nothing to serve", file=sys.stderr)
+        return 2
+
+    port = args.port or DEFAULT_PORT
+    print(f"\n  http://127.0.0.1:{port}/\n", file=sys.stderr)
+    print("Ctrl+C to stop. Nothing is left listening or written afterwards.", file=sys.stderr)
+    try:
+        serve(site=site, payloads=payloads, port=port)
+    except ServerError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
+    except KeyboardInterrupt:
+        print("\nstopped.", file=sys.stderr)
+    return 0
+
+
 def _profile(args: argparse.Namespace) -> int:
     """Show or set the hardware facts that no file records."""
     if args.dpi is not None and (args.dpi_x is not None or args.dpi_y is not None):
@@ -576,6 +668,39 @@ def _build_parser() -> argparse.ArgumentParser:
         help=f"where to write the page (default: {default_page_path()})",
     )
     live.set_defaults(func=_live)
+
+    serve_cmd = subparsers.add_parser(
+        "serve",
+        parents=[common],
+        help="serve the page that plays your replays back",
+        description=(
+            "Binds 127.0.0.1 and nothing else. A per-run bearer token is published "
+            "beside the tool's own data, the page carries it, and both are gone when "
+            "the command stops.\n\n"
+            "A busy port is a failure rather than a reason to move: a client with the "
+            "old port cached would reach whatever else is there, and the neighbouring "
+            "ports belong to other tools of this kind.\n\n"
+            "The page is built from web/ and is not committed. Build it once with "
+            "`cd web && npm install && npm run build`."
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    serve_cmd.add_argument("--replays", type=Path, default=None, help="folder of .osr files")
+    serve_cmd.add_argument("--songs", type=Path, default=None, help="beatmap folder")
+    serve_cmd.add_argument(
+        "--site", type=Path, default=None, help="built web/dist (default: found from the checkout)"
+    )
+    serve_cmd.add_argument(
+        "--port", type=int, default=None, help=f"port to bind (default: {DEFAULT_PORT})"
+    )
+    serve_cmd.add_argument(
+        "--limit",
+        type=int,
+        default=25,
+        metavar="N",
+        help="most recent replays to prepare (default: 25); each stays in memory",
+    )
+    serve_cmd.set_defaults(func=_serve)
 
     profile = subparsers.add_parser(
         "profile",

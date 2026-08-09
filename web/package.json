@@ -1,0 +1,32 @@
+{
+  "name": "@osu-forge/web",
+  "private": true,
+  "type": "module",
+  "version": "0.1.0",
+  "description": "The page osu-forge serves: replay playback and analysis.",
+  "license": "Apache-2.0",
+  "scripts": {
+    "dev": "astro dev",
+    "build": "astro build",
+    "preview": "astro preview",
+    "check": "astro check && tsc --noEmit",
+    "licenses": "license-checker-rseidelsohn --production --onlyAllow 'MIT;ISC;BSD-2-Clause;BSD-3-Clause;Apache-2.0;0BSD;CC0-1.0;OFL-1.1;Unlicense;Python-2.0;BlueOak-1.0.0;MIT-0'"
+  },
+  "dependencies": {
+    "@astrojs/react": "^4.2.0",
+    "@fontsource/geist-mono": "^5.1.0",
+    "@fontsource/inter": "^5.1.0",
+    "astro": "^5.2.0",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0"
+  },
+  "devDependencies": {
+    "@astrojs/check": "^0.9.4",
+    "@tailwindcss/vite": "^4.0.0",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "license-checker-rseidelsohn": "^4.4.2",
+    "tailwindcss": "^4.0.0",
+    "typescript": "^5.7.0"
+  }
+}

@@ -1,0 +1,9 @@
+# Build output is not committed. It is reproducible from this checkout, and a
+# committed dist/ is a second copy of the source that drifts from it silently.
+dist/
+.astro/
+node_modules/
+
+# A lockfile IS committed — see package-lock.json. It is the only thing that
+# makes the licence gate in CI mean anything, because a gate that runs against
+# whatever npm resolved today is checking a different tree each time.

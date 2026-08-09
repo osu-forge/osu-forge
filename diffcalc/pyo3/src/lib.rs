@@ -49,8 +49,12 @@ const PATH_SPACING: f64 = 5.0;
 /// outright, so one cannot reach this far.
 // These types only ever travel Rust -> Python. `skip_from_py_object` says so
 // rather than deriving a conversion nothing calls.
-#[pyclass(eq, eq_int, skip_from_py_object, module = "osu_forge_diffcalc")]
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+// `hash` alongside `eq`: without it PyO3 defines `__eq__` and Python then sets
+// `__hash__` to None, so these become unusable as dict keys or set members —
+// which is exactly what a caller reaches for when mapping a kind to a label.
+// The failure arrives as a TypeError at the use site rather than here.
+#[pyclass(eq, eq_int, hash, frozen, skip_from_py_object, module = "osu_forge_diffcalc")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ObjectKind {
     Circle,
     Slider,
@@ -58,8 +62,12 @@ pub enum ObjectKind {
 }
 
 /// Which kind of scoreable point along a slider this is.
-#[pyclass(eq, eq_int, skip_from_py_object, module = "osu_forge_diffcalc")]
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+// `hash` alongside `eq`: without it PyO3 defines `__eq__` and Python then sets
+// `__hash__` to None, so these become unusable as dict keys or set members —
+// which is exactly what a caller reaches for when mapping a kind to a label.
+// The failure arrives as a TypeError at the use site rather than here.
+#[pyclass(eq, eq_int, hash, frozen, skip_from_py_object, module = "osu_forge_diffcalc")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum PartKind {
     Tick,
     Repeat,

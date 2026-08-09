@@ -1,0 +1,38 @@
+---
+/**
+ * The shell every page sits in.
+ *
+ * Fonts are imported as npm packages rather than linked from a CDN. This page
+ * is served from 127.0.0.1 and makes no external request — the server tests
+ * assert that, and a font link would be the one line that quietly broke it.
+ */
+import "@fontsource/inter/400.css";
+import "@fontsource/geist-mono/400.css";
+import "@/styles/tokens.css";
+
+interface Props {
+  title: string;
+}
+
+const { title } = Astro.props;
+---
+
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <!-- No external origins are reachable from this page, stated to the browser
+         as well as to the reader. `connect-src 'self'` is what keeps a future
+         component from quietly fetching something. -->
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; connect-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
+    />
+    <meta name="referrer" content="no-referrer" />
+    <title>{title}</title>
+  </head>
+  <body class="min-h-screen bg-canvas text-ink antialiased">
+    <slot />
+  </body>
+</html>

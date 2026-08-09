@@ -1,0 +1,23 @@
+---
+import Base from "@/layouts/Base.astro";
+import { App } from "@/components/App";
+
+/**
+ * `__TOKEN__` is substituted by the server when it serves this file.
+ *
+ * It is in the HTML rather than fetched because a browser navigating to a URL
+ * cannot send an `Authorization` header. That is safe rather than a compromise:
+ * a cross-site page can cause the navigation but the same-origin policy stops
+ * it reading the response, so it cannot get the token out.
+ *
+ * During `astro dev` there is no server doing the substitution, so the literal
+ * placeholder is what appears — and the API calls fail with a message saying
+ * the token was rejected, which is the correct thing for a page opened without
+ * one.
+ */
+const token = "__TOKEN__";
+---
+
+<Base title="osu-forge">
+  <App token={token} client:load />
+</Base>

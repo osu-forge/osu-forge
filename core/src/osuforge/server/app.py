@@ -52,14 +52,24 @@ def _token_from_subprotocols(raw: str | None) -> str | None:
     return None
 
 
-def build_app(access: Access, *, page: str, payloads: dict[str, Any]) -> FastAPI:
+def build_app(
+    access: Access,
+    *,
+    page: str,
+    payloads: dict[str, Any],
+    assets: dict[str, tuple[bytes, str]] | None = None,
+) -> FastAPI:
     """Assemble the server.
 
-    `payloads` maps a replay name to a `ReplayPayload`. Passed in rather than
-    discovered here, because a server that goes looking at the filesystem on
-    request is a server whose reach is decided by whatever asks it.
+    `payloads` maps a replay name to a `ReplayPayload`, and `assets` maps a URL
+    path to `(bytes, content type)`. Both are passed in rather than discovered
+    here, because a server that goes looking at the filesystem on request is a
+    server whose reach is decided by whatever asks it — and with the built site
+    already in memory, path traversal has no mechanism to exist rather than
+    being something a filter has to catch.
     """
     app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
+    static = assets or {}
 
     @app.middleware("http")
     async def guard(
@@ -72,7 +82,13 @@ def build_app(access: Access, *, page: str, payloads: dict[str, Any]) -> FastAPI
         if not access.origin_allowed(request.headers.get("origin")):
             return JSONResponse({"error": "bad origin"}, status_code=403)
 
-        if request.url.path != "/" and not access.token.matches(_token_from(request)):
+        # The page and the assets it needs are reachable without a token, for
+        # the same reason: a browser fetching a stylesheet named by the HTML it
+        # just loaded cannot attach a header either. Nothing under /api or /ws
+        # is exempt, and those are where the data is.
+        path = request.url.path
+        exempt = path == "/" or path in static
+        if not exempt and not access.token.matches(_token_from(request)):
             return JSONResponse({"error": "unauthorised"}, status_code=401)
 
         response = await call_next(request)
@@ -110,6 +126,13 @@ def build_app(access: Access, *, page: str, payloads: dict[str, Any]) -> FastAPI
             raise HTTPException(status_code=404, detail="no such replay")
         return Response(content=payload.frames, media_type="application/octet-stream")
 
+    @app.get("/api/replays/{name}/paths")
+    async def paths(name: str) -> Response:
+        payload = payloads.get(name)
+        if payload is None:
+            raise HTTPException(status_code=404, detail="no such replay")
+        return Response(content=payload.paths, media_type="application/octet-stream")
+
     @app.websocket("/ws")
     async def socket(websocket: WebSocket) -> None:
         # The middleware above does not run for WebSockets, so the same checks
@@ -145,5 +168,18 @@ def build_app(access: Access, *, page: str, payloads: dict[str, Any]) -> FastAPI
             # A closed socket arrives as an exception. Nothing here owns state
             # that needs unwinding, so the connection simply ends.
             return
+
+    # Registered last, deliberately: a catch-all declared earlier would shadow
+    # every named route above it. The lookup is a dict built before the socket
+    # opened, so a request for `../../secrets` finds no key — path traversal has
+    # no mechanism here rather than being caught by a filter that has to be
+    # right every time.
+    @app.get("/{path:path}", include_in_schema=False)
+    async def asset(path: str) -> Response:
+        found = static.get("/" + path)
+        if found is None:
+            raise HTTPException(status_code=404, detail="not found")
+        body, content_type = found
+        return Response(content=body, media_type=content_type)
 
     return app

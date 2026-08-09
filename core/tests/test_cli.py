@@ -280,7 +280,7 @@ class TestAdvisoryOnly:
         commands = set(subparsers.choices)  # type: ignore[arg-type]
         # `collect`, `live` and `profile` write, but only under
         # %LOCALAPPDATA%\osu-forge. Nothing here opens a file the game owns.
-        assert commands == {"doctor", "scan", "collect", "live", "profile"}
+        assert commands == {"doctor", "scan", "collect", "live", "profile", "serve"}
         assert not commands & {"apply", "fix", "write", "set", "install", "repair"}
 
     def test_the_config_file_is_untouched_by_a_full_run(
