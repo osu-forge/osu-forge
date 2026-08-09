@@ -1,7 +1,13 @@
 {
   "extends": "astro/tsconfigs/strict",
   "include": [".astro/types.d.ts", "**/*"],
-  "exclude": ["dist"],
+  // This config covers what ships. The build-time shader sources and the
+  // vendored DSL are checked by tsconfig.shaders.json instead, with settings
+  // the vendored code satisfies — `exclude` alone would not do it, because
+  // TypeScript follows imports regardless. The alternative was patching
+  // vendored files, which makes the next copy a merge, or loosening the
+  // settings for the application too.
+  "exclude": ["dist", "vendor", "shaders", "scripts"],
   "compilerOptions": {
     "jsx": "react-jsx",
     "jsxImportSource": "react",

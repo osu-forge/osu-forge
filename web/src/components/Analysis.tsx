@@ -1,4 +1,5 @@
-import type { Analysis, Break, Finding } from "@/lib/protocol";
+import type { Analysis, Break, Finding, ReplayHeader } from "@/lib/protocol";
+import { causeOf } from "@/lib/cause";
 import type { Key } from "@/i18n";
 
 /**
@@ -24,6 +25,9 @@ import type { Key } from "@/i18n";
 
 export interface AnalysisPanelProps {
   analysis: Analysis | null;
+  /** Needed for the map's own judgement windows: "40 ms late" means one thing
+   *  at OD 4 and another at OD 9, so a cause is read against them. */
+  header: ReplayHeader;
   t: (key: Key, values?: Record<string, string | number>) => string;
   onSeek?: (time: number) => void;
 }
@@ -77,25 +81,41 @@ function FindingRow({ finding }: { finding: Finding }) {
   );
 }
 
-function BreakRow({ item, onSeek }: { item: Break; onSeek?: (time: number) => void }) {
+function BreakRow({
+  item,
+  header,
+  onSeek,
+}: {
+  item: Break;
+  header: ReplayHeader;
+  onSeek?: (time: number) => void;
+}) {
   const seconds = Math.max(0, Math.floor(item.time / 1000));
   const stamp = `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}`;
+  const cause = causeOf(item, header);
   return (
     <li>
       <button
         type="button"
         onClick={() => onSeek?.(item.time)}
-        className="hairline-b flex w-full cursor-pointer items-baseline justify-between gap-lg py-sm text-left last:border-0 hover:text-ink-hover"
+        className="hairline-b block w-full cursor-pointer py-md text-left last:border-0 hover:text-ink-hover"
       >
-        <span className="font-mono text-body-sm tabular-nums">{stamp}</span>
-        <span className="text-body-sm text-body">{item.kind}</span>
-        <span className="text-body-sm tabular-nums text-mute">{item.combo}x</span>
+        <div className="flex items-baseline justify-between gap-lg">
+          <span className="font-mono text-body-sm tabular-nums">{stamp}</span>
+          <span className="text-body-sm tabular-nums text-mute">
+            −{item.combo_lost}x
+          </span>
+        </div>
+        {/* The cause, carrying the number it was read from. A verdict without
+            its evidence is a guess wearing a uniform, and the number is
+            usually the more useful half. */}
+        <div className="mt-xxs max-w-[46ch] text-body-sm text-body">{cause.text}</div>
       </button>
     </li>
   );
 }
 
-export function AnalysisPanel({ analysis, t, onSeek }: AnalysisPanelProps) {
+export function AnalysisPanel({ analysis, header, t, onSeek }: AnalysisPanelProps) {
   if (!analysis) {
     return (
       <div className="p-xl">
@@ -160,7 +180,12 @@ export function AnalysisPanel({ analysis, t, onSeek }: AnalysisPanelProps) {
           <h2 className="eyebrow mb-sm">{t("analysis.breaks")}</h2>
           <ul className="m-0 list-none p-0">
             {analysis.breaks.map((item) => (
-              <BreakRow key={`${item.time}-${item.kind}`} item={item} onSeek={onSeek} />
+              <BreakRow
+                key={`${item.time}-${item.kind}`}
+                item={item}
+                header={header}
+                onSeek={onSeek}
+              />
             ))}
           </ul>
         </section>

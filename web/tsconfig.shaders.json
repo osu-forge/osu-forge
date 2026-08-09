@@ -1,0 +1,19 @@
+{
+  // The build-time half: shader sources and the vendored DSL they are authored
+  // against. Never bundled into the page — see vendor/xgis-shader-dsl/PROVENANCE.md.
+  //
+  // `noUncheckedIndexedAccess` is off here and on for the application. The
+  // vendored code predates it and does not satisfy it; turning it off for
+  // everything to accommodate third-party source would be paying for vendoring
+  // with the application's type safety.
+  "extends": "astro/tsconfigs/strict",
+  "include": ["shaders/**/*", "scripts/**/*.ts", "vendor/**/*.ts"],
+  "compilerOptions": {
+    "strict": true,
+    "noUncheckedIndexedAccess": false,
+    "allowImportingTsExtensions": true,
+    "noEmit": true,
+    "types": ["node"],
+    "skipLibCheck": true
+  }
+}

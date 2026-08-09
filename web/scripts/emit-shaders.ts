@@ -8,19 +8,6 @@ import { MODULES } from "../shaders/playfield.ts";
 
 const OUTPUT = process.env.OSU_FORGE_SHADER_OUT!;
 
-interface Reflection {
-  uniforms?: {
-    name: string;
-    size: number;
-    align: number;
-    fields?: { name: string; type: string; offset: number; size: number }[];
-  }[];
-  vertex?: {
-    attributes?: { name: string; location: number; type: string; offset: number }[];
-    stride?: number;
-  };
-}
-
 const parts: string[] = [
   "/**",
   " * Playfield shaders: GLSL ES 3.00, and the reflection needed to bind it.",
@@ -60,7 +47,9 @@ const parts: string[] = [
 for (const [name, decl] of Object.entries(MODULES)) {
   const vertex = emitGlslModule(decl as never, "vertex");
   const fragment = emitGlslModule(decl as never, "fragment");
-  const reflection = reflect(decl as never) as Reflection;
+  // The DSL's own Reflection type, not a hand-written copy of it — a second
+  // description of the same contract is one that drifts.
+  const reflection = reflect(decl as never);
 
   const uniform = reflection.uniforms?.[0];
   if (!uniform) throw new Error(`${name}: no uniform block; the renderer would bind nothing`);

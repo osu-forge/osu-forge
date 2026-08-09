@@ -63,9 +63,20 @@ export interface Finding {
 }
 
 export interface Break {
+  /** Map time, milliseconds. */
   time: number;
-  kind: string;
-  combo: number;
+  kind: "circle" | "slider" | "spinner";
+  /** 0 miss, 1 fifty, 2 hundred, 3 three hundred. */
+  grade: number;
+  /** The combo that ended here. */
+  combo_lost: number;
+  /** Timing error in map milliseconds, negative early. `null` when there was
+   *  no press at all — which is itself the answer to why it broke. */
+  error: number | null;
+  /** Distance from the centre at the press, in radii. */
+  aim_error: number | null;
+  parts_collected: number | null;
+  parts_total: number | null;
 }
 
 export interface Analysis {

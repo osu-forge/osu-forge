@@ -209,7 +209,12 @@ export function App({ token }: { token: string }) {
           </div>
           <aside className="hairline-l min-h-0 overflow-y-auto border-l border-hairline">
             {loaded && (
-              <AnalysisPanel analysis={loaded.header.analysis} t={t} onSeek={seek} />
+              <AnalysisPanel
+                analysis={loaded.header.analysis}
+                header={loaded.header}
+                t={t}
+                onSeek={seek}
+              />
             )}
           </aside>
         </div>
