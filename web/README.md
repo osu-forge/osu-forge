@@ -4,9 +4,24 @@ The page `forge serve` hands a browser. Astro with React islands and Tailwind v4
 
 ```bash
 npm install
-npm run build     # produces dist/, which the Python server reads
+npm run build     # emits shaders, then produces dist/, which the server reads
 npm run dev       # Astro's dev server; the API calls will 401, see below
+npm run shaders   # shaders only; build and dev both depend on it
 ```
+
+## Shaders are built, never interpreted
+
+The shader DSL is vendored under `vendor/xgis-shader-dsl/` and runs **only at
+build time**, in Node. What reaches the browser is the GLSL it printed plus the
+reflection describing how to bind it — `src/shaders/generated.ts`, which is
+gitignored because it is derived.
+
+Checked rather than asserted: after a build, `dist/**/*.js` contains
+`#version 300 es` and the emitted function bodies, and none of `emitGlslModule`,
+`uniformStruct`, `ioStruct`, `reflect` or `emitModule`.
+
+`vendor/xgis-shader-dsl/PROVENANCE.md` has the rest, including the two things
+the GLSL emit changes that the authored source does not show.
 
 `dist/` is **not committed**. It is reproducible from this checkout, and a
 committed build is a second copy of the source that drifts from it silently.
@@ -56,15 +71,25 @@ behaviour for a page opened without a server, not a bug to work around.
 
 | | |
 |---|---|
+| `shaders/` | shader source, authored against the DSL; build time only |
+| `scripts/run-emit.mjs` | bundles and runs the emit |
 | `src/lib/protocol.ts` | the wire format, and the schema version check |
+| `src/lib/renderer.ts` | raw WebGL2; two programs, discs instanced |
 | `src/components/Playfield.tsx` | the playfield: objects, slider bodies, cursor |
 | `src/components/ErrorTimeline.tsx` | every judgement against the windows it was judged by |
 | `src/components/App.tsx` | the one island; owns the clock and the selection |
 | `src/i18n/` | UI chrome in en and ko; analysis prose stays English |
 
-`Playfield` is Canvas 2D today. The WebGL2 renderer replaces it once the shader
-pipeline is vendored, and takes the same inputs — decoded samples, a path
-buffer, a clock.
+## Why the slider body gets a depth pass
+
+A slider body overlaps itself — every curve doubles back near its start, and a
+repeat slider covers its whole path twice. Alpha blending makes each overlap
+blend over itself, so the body comes out mottled and brightest exactly where the
+shape is most crowded, which is where someone is trying to read it.
+
+So the body pass writes depth from the distance to the centre line, tests
+`LESS`, and does not blend. The fragment nearest the centre wins and the rest
+are discarded: one coat of paint however many times the ribbon crosses itself.
 
 ## Two things the drawing must keep doing
 

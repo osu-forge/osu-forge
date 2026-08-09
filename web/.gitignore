@@ -4,6 +4,11 @@ dist/
 .astro/
 node_modules/
 
+# Emitted from shaders/ at build time by scripts/run-emit.mjs. Derived, like
+# dist/. What is committed is the source that produces it — and the DSL that
+# does the producing, which is why the emit can happen from a fresh checkout.
+src/shaders/generated.ts
+
 # A lockfile IS committed — see package-lock.json. It is the only thing that
 # makes the licence gate in CI mean anything, because a gate that runs against
 # whatever npm resolved today is checking a different tree each time.

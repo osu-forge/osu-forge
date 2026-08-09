@@ -6,7 +6,9 @@
   "description": "The page osu-forge serves: replay playback and analysis.",
   "license": "Apache-2.0",
   "scripts": {
-    "dev": "astro dev",
+    "shaders": "node scripts/run-emit.mjs",
+    "dev": "npm run shaders && astro dev",
+    "prebuild": "npm run shaders",
     "build": "astro build",
     "preview": "astro preview",
     "check": "astro check && tsc --noEmit",
@@ -23,6 +25,7 @@
   "devDependencies": {
     "@astrojs/check": "^0.9.4",
     "@tailwindcss/vite": "^4.0.0",
+    "@types/node": "^26.2.0",
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",
     "license-checker-rseidelsohn": "^4.4.2",

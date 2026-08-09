@@ -7,6 +7,10 @@
     "jsxImportSource": "react",
     "strict": true,
     "noUncheckedIndexedAccess": true,
+    // The build-time shader scripts import the vendored DSL by its real path,
+    // and Node's own type stripping requires the extension to be written out.
+    "allowImportingTsExtensions": true,
+    "types": ["node"],
     "baseUrl": ".",
     "paths": {
       "@/*": ["src/*"]
