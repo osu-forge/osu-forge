@@ -387,7 +387,7 @@ def _diagnose(args: argparse.Namespace) -> int:
     offsets = verified.offsets if verified is not None and verified.trustworthy else None
 
     collected = gather(paths, BeatmapIndex(songs_dir), offsets=offsets)
-    result = diagnose(collected.entries, decomposition=collected.decomposition)
+    result = diagnose(collected.entries)
     maps = by_beatmap(collected.entries) if result.usable else {}
 
     # Only when the corpus spans every epoch: the point of the split is the
@@ -628,6 +628,7 @@ def _serve(args: argparse.Namespace) -> int:
         serve,
     )
     from osuforge.server.protocol import analysis_payload
+    from osuforge.sources import osudb
 
     try:
         config_path = find_config(args.config)
@@ -654,10 +655,18 @@ def _serve(args: argparse.Namespace) -> int:
             print(f"error: no {label} folder at {folder}", file=sys.stderr)
             return 2
 
+    # The same read `forge diagnose` makes, for the same reason: a map the
+    # player nudged in game is judged on a shifted clock, and its replays
+    # belong out of the pooled bias rather than silently in it. Unknown is
+    # carried as unknown — the page says so rather than showing an answer that
+    # assumed zero everywhere.
+    verified, offsets_finding = osudb.load(path=args.db, songs=songs_dir)
+    offsets = verified.offsets if verified is not None and verified.trustworthy else None
+
     index = BeatmapIndex(songs_dir)
     payloads: dict[str, Any] = {}
     skipped: dict[str, int] = {}
-    corpus = CorpusState()
+    corpus = CorpusState(offsets=offsets)
     cache = AnalysisCache(args.cache)
 
     # Best effort, never fatal: the journal is what knows when settings
@@ -780,6 +789,9 @@ def _serve(args: argparse.Namespace) -> int:
             f"history:  cache unavailable at {cache.path}; the corpus covers this run only",
             file=sys.stderr,
         )
+    if offsets is None:
+        print(f"offsets:  {offsets_finding.title}", file=sys.stderr)
+
     if not payloads:
         print("error: nothing to serve", file=sys.stderr)
         return 2
@@ -1146,6 +1158,12 @@ def _build_parser() -> argparse.ArgumentParser:
         help=(
             f"the settings history the corpus panel splits on (default: {default_journal_path()})"
         ),
+    )
+    serve_cmd.add_argument(
+        "--db",
+        type=Path,
+        default=None,
+        help="path to osu!.db, read for per-beatmap local offsets",
     )
     serve_cmd.add_argument(
         "--cache",

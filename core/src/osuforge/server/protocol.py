@@ -327,6 +327,7 @@ def corpus_payload(
     beatmaps_played: int,
     health: CorpusHealth,
     unreproduced: dict[str, str],
+    local_offsets_known: bool,
     reading: str | None = None,
     progress: Progress | None = None,
 ) -> dict[str, Any]:
@@ -343,6 +344,11 @@ def corpus_payload(
     the second. And `insufficient` is a sentence rather than an absent key,
     because "not enough data" and "nothing wrong" are opposite conclusions
     that look identical as an empty panel.
+
+    `local_offsets_known` is a third of the same kind, named as
+    `forge diagnose` names it in its JSON. A corpus whose offsets were read and
+    a corpus that assumed them zero look identical in every other number here,
+    and only one of them has actually excluded the maps the player nudged.
     """
     bias = diagnosis.bias
     timing = diagnosis.timing
@@ -380,6 +386,7 @@ def corpus_payload(
         # not in this answer, and why" — and whether the screen or the inclusion
         # policy did the excluding is carried by the reason text itself.
         "excluded": {**unreproduced, **diagnosis.dropped},
+        "local_offsets_known": local_offsets_known,
         "health": {
             "total": health.total,
             "usable": health.usable,

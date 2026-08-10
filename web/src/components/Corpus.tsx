@@ -203,6 +203,12 @@ export function CorpusPanel({ corpus, updatedAt, t }: CorpusPanelProps) {
             </p>
           )}
 
+          {!corpus.local_offsets_known && (
+            <p className="rounded-sm border border-hairline p-md text-body-sm text-mute">
+              {t("corpus.offsetsUnknown")}
+            </p>
+          )}
+
           <section>
             <h2 className="eyebrow mb-sm">{t("corpus.axes")}</h2>
             <ul className="m-0 list-none p-0">

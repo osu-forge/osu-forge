@@ -222,6 +222,32 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   read from disk at request time, for a file the request cannot choose.
 
 ### Changed
+- `forge serve` reads `osu!.db` for per-beatmap local offsets, with a `--db`
+  flag mirroring `forge diagnose`'s. Until now the served corpus assumed every
+  map sat at zero, so replays of a map the player had nudged in game were
+  pooled into the bias on one road and excluded on the other — the same folder
+  answered twice, differently. The served page now excludes them by the same
+  policy, names them in the excluded list with the same reason, and carries
+  `local_offsets_known` so a corpus that assumed zero says so rather than
+  looking like one that checked. A caveat sits on the panel when it did.
+- The served corpus gains the arrival axis: how much of the mean hit error is
+  where the cursor was when the object came due, and how much is the wait after
+  it had already arrived — the part no offset changes. It reaches the page by
+  the code `forge diagnose` uses, not a second implementation of it.
+- The arrival split now answers to the same inclusion policy the bias does.
+  It was pooled over every gathered replay, including ones excluded for a local
+  offset, for missing more than a tenth of the map, or for being too short to
+  say anything — so its `approach` term carried shifts the bias beside it had
+  refused. Two numbers in one report described different corpora. Expect
+  `approach` and the arrival verdict to move on a corpus with exclusions.
+- The analysis cache schema is at 2, because a play's reduction now carries its
+  arrival pairs and they cannot be recovered from an older row — the cursor
+  frames they need were discarded when the play was reduced. Every cached row
+  is dropped once, and history re-analyses at `--backfill` speed over the next
+  few starts. Nothing is lost: the replay files are still on disk.
+- `forge serve` and `forge diagnose` now read a play with no reported hits the
+  same way — as fully missed, which is the reading that excludes it rather than
+  the one that pools a play whose judgement counts say nothing.
 - Integration tests are deselected by default and require an environment
   variable pointing at real data. A plain `pytest` run can no longer read
   anyone's osu! install.

@@ -10,6 +10,7 @@ from __future__ import annotations
 from datetime import UTC, datetime, timedelta
 
 import numpy as np
+import pytest
 
 from osuforge.analysis.clustering import ClusteredMean
 from osuforge.analysis.corpus import (
@@ -136,6 +137,74 @@ class TestAxes:
         result = diagnose(entries(mean=9.0, sigma=12.0))
         actionable = [axis.name for axis in result.axes if axis.actionable]
         assert actionable == ["timing bias"]
+
+
+class TestArrival:
+    """The split answers to the same inclusion policy the bias does."""
+
+    HITS = 150
+    SHIFT = 50.0
+    """What a nudged map does to every hit error on it — and to `approach`."""
+
+    def _corpus(self, *, local_offset: int) -> list[Entry]:
+        """Twelve clean replays, plus one on a map carrying `local_offset`."""
+        built = [
+            Entry(
+                replay=f"s{session}r{index}",
+                beatmap_hash="map-a",
+                beatmap="Artist - Title [map-a]",
+                played_at=START + timedelta(days=session, minutes=index * 5),
+                session=session,
+                errors=[4.0] * self.HITS,
+                miss_rate=0.01,
+                accuracy=0.97,
+                breaks=1,
+                arrival=[(4.0, 1.0)] * self.HITS,
+            )
+            for session in range(4)
+            for index in range(3)
+        ]
+        built.append(
+            Entry(
+                replay="nudged",
+                beatmap_hash="map-b",
+                beatmap="Artist - Title [map-b]",
+                played_at=START + timedelta(days=3, hours=1),
+                session=3,
+                errors=[4.0 + self.SHIFT] * self.HITS,
+                miss_rate=0.01,
+                accuracy=0.97,
+                breaks=1,
+                local_offset=local_offset,
+                arrival=[(4.0 + self.SHIFT, 1.0)] * self.HITS,
+            )
+        )
+        return built
+
+    def test_a_replay_the_policy_excludes_is_out_of_the_split_too(self) -> None:
+        # The bias already refuses a map judged on a shifted clock. Pooling its
+        # arrival pairs anyway would put the same shift into `approach` while
+        # the number beside it refused it, and the two would describe different
+        # corpora in one report.
+        result = diagnose(self._corpus(local_offset=-20))
+        assert "local offset" in result.dropped["nudged"]
+        assert result.timing is not None
+        split = result.timing.decomposition
+        assert split is not None
+        assert split.n == 12 * self.HITS
+        assert split.approach == pytest.approx(3.0)
+        assert split.reaction == pytest.approx(1.0)
+
+    def test_without_the_offset_the_same_replay_is_in_it(self) -> None:
+        # The control: the exclusion is what moved `approach`, not the pairs
+        # being unreachable from here.
+        result = diagnose(self._corpus(local_offset=0))
+        assert "nudged" not in result.dropped
+        assert result.timing is not None
+        split = result.timing.decomposition
+        assert split is not None
+        assert split.n == 13 * self.HITS
+        assert split.approach == pytest.approx((12 * 3.0 + 53.0) / 13)
 
 
 class TestHonesty:

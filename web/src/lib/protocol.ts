@@ -254,6 +254,10 @@ export interface Corpus {
   /** Replay name to the reason it is not in this answer — the simulation
    *  screen and the inclusion policy both land here, each with its own words. */
   excluded: Record<string, string>;
+  /** Whether per-beatmap local offsets were read from osu!.db, or assumed to
+   *  be zero everywhere. The two corpora look identical in every other number
+   *  here, and only one of them has excluded the maps the player nudged. */
+  local_offsets_known: boolean;
   health: {
     total: number;
     usable: number;

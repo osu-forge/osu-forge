@@ -9,6 +9,7 @@ whether the answer says plainly that nothing here authorises a recommendation.
 from __future__ import annotations
 
 import json
+import math
 import typing
 from datetime import UTC, datetime, timedelta
 
@@ -32,24 +33,27 @@ def feed(
     seed: int = 3,
     first_session: int = 0,
     epoch: str | None = None,
+    dwell: float | None = None,
 ) -> None:
     """Plays on separate days, well past the session gap."""
     rng = np.random.default_rng(seed)
     for offset in range(sessions):
         session = first_session + offset
         for index in range(replays):
+            errors = rng.normal(mean, 12.0, hits).tolist()
             state.add(
                 f"{beatmap}-s{session}r{index}.osr",
                 beatmap_hash=beatmap,
                 beatmap=f"Artist - Title [{beatmap}]",
                 played_at=START + timedelta(days=session, minutes=5 * index),
-                errors=rng.normal(mean, 12.0, hits).tolist(),
+                errors=errors,
                 miss_rate=0.02,
                 accuracy=0.97,
                 breaks=1,
                 agreement=agreement,
                 agreement_reason="all judgements reproduce",
                 fractional_windows=False,
+                arrival=None if dwell is None else [(error, dwell) for error in errors],
                 epoch=epoch,
             )
 
@@ -217,6 +221,61 @@ class TestEpochs:
         json.dumps(state.recompute(), allow_nan=False)
 
 
+class TestLocalOffsets:
+    """The same reading `forge diagnose` does, so the two cannot disagree."""
+
+    def test_a_nudged_map_leaves_the_bias_and_is_named_for_it(self) -> None:
+        state = CorpusState(offsets={"map-b": -12})
+        feed(state, beatmap="map-a")
+        feed(state, beatmap="map-b", seed=9)
+        answer = state.recompute()
+
+        assert answer["replays"] == 12
+        excluded = [
+            reason for name, reason in answer["excluded"].items() if name.startswith("map-b")
+        ]
+        assert len(excluded) == 12
+        assert all("local offset" in reason for reason in excluded)
+        assert all("-12 ms" in reason for reason in excluded)
+
+    def test_the_same_corpus_without_the_reading_keeps_them(self) -> None:
+        # The control, and the bug this fixes: a serve run that never opened
+        # osu!.db assumed zero everywhere and pooled the nudged map in silently.
+        state = CorpusState()
+        feed(state, beatmap="map-a")
+        feed(state, beatmap="map-b", seed=9)
+        answer = state.recompute()
+        assert answer["replays"] == 24
+        assert not answer["excluded"]
+
+    def test_read_and_all_zero_is_not_the_same_claim_as_unread(self) -> None:
+        unknown = CorpusState()
+        feed(unknown)
+        known = CorpusState(offsets={})
+        feed(known)
+        assert unknown.recompute()["local_offsets_known"] is False
+        assert known.recompute()["local_offsets_known"] is True
+
+
+class TestArrival:
+    def test_dwell_pairs_become_the_third_axis(self) -> None:
+        state = CorpusState()
+        feed(state, mean=6.0, dwell=2.0)
+        answer = state.recompute()
+        arrival = next(axis for axis in answer["axes"] if axis["name"] == "arrival")
+        # Of a 6 ms mean error, 2 ms is the wait after the cursor arrived, so
+        # the cursor was on target 4 ms after the object was due.
+        assert "4 ms" in arrival["verdict"]
+        assert arrival["actionable"] is False
+        json.dumps(answer, allow_nan=False)
+
+    def test_a_corpus_without_dwell_keeps_the_two_axes_it_had(self) -> None:
+        state = CorpusState()
+        feed(state, mean=6.0)
+        names = [axis["name"] for axis in state.recompute()["axes"]]
+        assert names == ["timing bias", "timing spread"]
+
+
 class TestFacts:
     """The JSON-safe reduction — the shape the analysis cache persists."""
 
@@ -231,6 +290,9 @@ class TestFacts:
         "agreement": "exact",
         "agreement_reason": "all judgements reproduce",
         "fractional_windows": False,
+        # A dwell that was never measured travels as `null`: NaN has no JSON
+        # spelling, and this dictionary is persisted as strict JSON.
+        "arrival": [[1.5, 0.5], [-2.25, None], [0.5, 0.25]],
     }
 
     def test_add_facts_is_add_with_the_types_restored(self) -> None:
@@ -247,10 +309,37 @@ class TestFacts:
             agreement=Agreement.EXACT,
             agreement_reason="all judgements reproduce",
             fractional_windows=False,
+            arrival=[(1.5, 0.5), (-2.25, math.nan), (0.5, 0.25)],
         )
         from_facts = CorpusState()
         from_facts.add_facts("a.osr", dict(self.FACTS))
         assert direct.recompute() == from_facts.recompute()
+
+    def test_a_missing_arrival_is_a_row_from_before_the_split(self) -> None:
+        # An older cache row cannot grow one: the cursor frames it would need
+        # were discarded when the play was reduced. Raising sends the caller
+        # back to the replay file rather than serving a corpus whose third axis
+        # covers only half its history.
+        state = CorpusState()
+        stale = dict(self.FACTS)
+        del stale["arrival"]
+        try:
+            state.add_facts("a.osr", stale)
+        except KeyError:
+            pass
+        else:
+            raise AssertionError("a row without arrival pairs must raise")
+        assert len(state) == 0
+
+    def test_a_malformed_arrival_raises_rather_than_being_guessed_at(self) -> None:
+        state = CorpusState()
+        try:
+            state.add_facts("a.osr", {**self.FACTS, "arrival": [1.5, 0.5]})
+        except TypeError:
+            pass
+        else:
+            raise AssertionError("pairs that are not pairs must raise")
+        assert len(state) == 0
 
     def test_a_malformed_dictionary_raises_rather_than_poisoning(self) -> None:
         # The caller treats this as a cache miss and re-analyses. Silently

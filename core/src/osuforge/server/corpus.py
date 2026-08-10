@@ -28,6 +28,14 @@ says.
   view, where the two eras are estimated separately and only the difference
   crosses the boundary.
 
+- **Local offsets.** Read once from `osu!.db` at startup and looked up per
+  beatmap while the entries are built, rather than remembered with each play:
+  the file holds the offset a map carries now, and a play analysed a month ago
+  records nothing about what it was then. A map the player has nudged in game
+  is judged on a shifted clock, so the inclusion policy drops its replays — and
+  the answer carries whether the file could be read at all, because assuming
+  zero and knowing zero are not the same claim.
+
 - **The oracle.** Never claimed. Nothing in a `forge serve` run has compared
   these simulations object by object against an independent judge, so
   `oracle_agreement` is `None`, `may_recommend` is false, and the payload says
@@ -47,13 +55,15 @@ never runs them.
 
 from __future__ import annotations
 
+import math
 import threading
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
 
 from osuforge.analysis.clustering import assign_sessions
 from osuforge.analysis.corpus import Entry, beatmap_reading, by_beatmap, diagnose
+from osuforge.analysis.gather import arrival_pairs
 from osuforge.analysis.progress import fill_epochs, progress
 from osuforge.replay.source import Judged
 from osuforge.replay.validate import Agreement, CorpusHealth
@@ -73,6 +83,12 @@ def reduce_play(judged: Judged) -> dict[str, Any]:
 
     `breaks` is the game's own miss count, matching what
     :func:`osuforge.analysis.gather.gather` records for the same replay.
+
+    `arrival` is computed here and nowhere else: it needs the cursor frames and
+    the modded beatmap, both of which are discarded once the play has been
+    reduced. A play restored from the cache cannot grow an arrival split later,
+    so a row written without one re-analyses rather than serving a corpus whose
+    third axis is missing for half its history.
     """
     reported = judged.replay.judgements
     beatmap = judged.beatmap
@@ -81,12 +97,20 @@ def reduce_play(judged: Judged) -> dict[str, Any]:
         "beatmap": f"{beatmap.artist} - {beatmap.title} [{beatmap.version}]",
         "played_at": judged.replay.timestamp.isoformat(),
         "errors": judged.simulation.timing_errors(),
-        "miss_rate": reported.count_miss / reported.total if reported.total else 0.0,
+        # No reported hits reads as fully missed, the same way `gather` reads
+        # it: `select` then drops the replay, which is the safe direction for a
+        # play whose judgement counts say nothing.
+        "miss_rate": reported.count_miss / reported.total if reported.total else 1.0,
         "accuracy": reported.accuracy,
         "breaks": reported.count_miss,
         "agreement": str(judged.check.agreement),
         "agreement_reason": judged.check.reason,
         "fractional_windows": judged.simulation.fractional_windows,
+        # `null` rather than NaN: this dictionary is persisted as strict JSON,
+        # which has no spelling for one.
+        "arrival": [
+            [error, None if math.isnan(dwell) else dwell] for error, dwell in arrival_pairs(judged)
+        ],
     }
 
 
@@ -107,6 +131,9 @@ class _Facts:
     agreement_reason: str
     fractional_windows: bool
 
+    arrival: list[tuple[float, float]] = field(default_factory=list)
+    """`(hit error, dwell)` pairs in real milliseconds, NaN dwell when unmeasured."""
+
     epoch: str | None = None
     """The settings fingerprint the collect journal recorded, if it has one.
 
@@ -121,10 +148,19 @@ class CorpusState:
     `recompute` is the expensive step and deduplicates itself — recomputing a
     corpus that has not changed returns the previous answer without running
     the statistics again.
+
+    `offsets` is the per-beatmap local offset map from `osu!.db`, as
+    :attr:`osuforge.sources.osudb.Verified.offsets` returns it, and it is fixed
+    for the life of the state — read once at startup, the way `forge diagnose`
+    reads it. That is not only economy: the recompute key is the set of play
+    names, so state arriving after a payload has been computed would never
+    invalidate it. `None` means the file could not be read and zero is assumed,
+    which is not the same claim as an empty dictionary's "read, and all zero".
     """
 
-    def __init__(self, *, seed: int = 0) -> None:
+    def __init__(self, *, seed: int = 0, offsets: dict[str, int] | None = None) -> None:
         self._seed = seed
+        self._offsets = offsets
         self._facts: dict[str, _Facts] = {}
         self._lock = threading.Lock()
         self._computed_for: frozenset[str] | None = None
@@ -147,6 +183,7 @@ class CorpusState:
         agreement: Agreement,
         agreement_reason: str,
         fractional_windows: bool,
+        arrival: list[tuple[float, float]] | None = None,
         epoch: str | None = None,
     ) -> None:
         """Record one analysed play. Re-adding a name replaces it."""
@@ -161,6 +198,7 @@ class CorpusState:
             agreement=agreement,
             agreement_reason=agreement_reason,
             fractional_windows=fractional_windows,
+            arrival=list(arrival or []),
             epoch=epoch,
         )
 
@@ -184,6 +222,13 @@ class CorpusState:
             agreement=Agreement(str(facts["agreement"])),
             agreement_reason=str(facts["agreement_reason"]),
             fractional_windows=bool(facts["fractional_windows"]),
+            # `null` came from a dwell that was never measured. Restoring it as
+            # NaN keeps "not measured" distinct from "arrived at the moment of
+            # the press", which is a measurement nobody made.
+            arrival=[
+                (float(error), math.nan if dwell is None else float(dwell))
+                for error, dwell in facts["arrival"]
+            ],
             epoch=epoch,
         )
 
@@ -237,6 +282,12 @@ class CorpusState:
                     miss_rate=fact.miss_rate,
                     accuracy=fact.accuracy,
                     breaks=fact.breaks,
+                    # Looked up now rather than remembered per play: `osu!.db`
+                    # holds the offset a map carries today, and a copy taken
+                    # when the play was analysed would go stale the moment the
+                    # player nudges that map in game.
+                    local_offset=(self._offsets or {}).get(fact.beatmap_hash, 0),
+                    arrival=fact.arrival,
                 )
                 for name, fact in believed.items()
             ),
@@ -278,6 +329,7 @@ class CorpusState:
             beatmaps_played=len({entry.beatmap_hash for entry in present}),
             health=health,
             unreproduced={**unreproduced, **out_of_epoch},
+            local_offsets_known=self._offsets is not None,
             reading=beatmap_reading(diagnosis.bias, per_beatmap),
             # Over everything believed, deliberately across epochs: the
             # boundary is the point of the view, and the sides are estimated
