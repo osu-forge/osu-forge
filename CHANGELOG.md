@@ -190,6 +190,15 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   the next 30%, slider bodies thinning across their own duration — with a
   `reveal HD` toggle for the analysis view; and the approach ring starts at
   four times the radius as the game draws it, not 3.4.
+- Slider parts on the wire, and the body finished properly. Each slider now
+  carries its ticks, repeats and tail with positions, aligned by index with a
+  per-part outcome the simulator was computing and discarding — so upcoming
+  ticks draw as the game's own dots and vanish as the ball passes, while a
+  part that dropped tracking stays marked in the miss colour where it
+  happened, including the dropped tail that is where most sliderbreaks live
+  and the one place the game shows nothing. Body ends are rounded with caps
+  drawn inside the same depth-tested pass as the body, so they resolve into
+  one flat coat instead of compositing a seam over the ribbon.
 - The player shows the play as it stands at the playhead. Exact running
   accuracy, unstable rate and judgement counts — every judgement at or
   before the clock, nothing projected, and deliberately no running combo

@@ -156,8 +156,23 @@ def objects_payload(beatmap: diffcalc.Beatmap) -> list[dict[str, Any]]:
         if obj.kind is diffcalc.ObjectKind.Slider:
             entry["p"] = list(span)
             entry["slides"] = obj.slides
+            # The scoring parts, positioned: ticks, repeats and the tail, in
+            # time order — the same order the simulator judges them, so the
+            # per-part outcomes in the judgement align by index. Without these
+            # a renderer can draw the body but not the reasons it breaks.
+            entry["parts"] = [
+                [round(part.time, 1), round(part.x, 2), round(part.y, 2), _PART_KINDS[part.kind]]
+                for part in obj.parts
+            ]
         payload.append(entry)
     return payload
+
+
+_PART_KINDS = {
+    diffcalc.PartKind.Tick: 0,
+    diffcalc.PartKind.Repeat: 1,
+    diffcalc.PartKind.Tail: 2,
+}
 
 
 _KIND_NAMES = {
@@ -474,6 +489,12 @@ class ReplayPayload:
                     "grade": int(hit.grade),
                     "error": hit.error,
                     "aim": None if hit.aim_error is None else round(hit.aim_error, 3),
+                    # Per-part outcomes for a slider, aligned by index with the
+                    # object's `parts`. 0/1 rather than booleans purely for
+                    # wire size — a marathon map carries thousands of these.
+                    "parts": (
+                        None if hit.parts_hit is None else [1 if p else 0 for p in hit.parts_hit]
+                    ),
                 }
                 for hit in simulation.hits
             ],

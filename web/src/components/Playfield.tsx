@@ -281,6 +281,38 @@ export function Playfield({ header, samples, paths, clock, trail = 48, hidden = 
           });
           discs.push({ x: bx, y: by, radius: radius * 0.62, inner: 0, colour });
         }
+
+        // The scoring parts. Upcoming ticks are the game's own dots and
+        // vanish as the ball passes them; a part the simulation says dropped
+        // tracking stays marked in the miss colour for the rest of the
+        // object's stay — including the tail, which is where most
+        // sliderbreaks actually live and the one place the game shows
+        // nothing.
+        const judgedParts = header.judgements[i]?.parts ?? null;
+        if (object.parts) {
+          for (let p = 0; p < object.parts.length; p++) {
+            const [partTime, partX, partY, partKind] = object.parts[p]!;
+            if (clock < partTime) {
+              if (partKind === 0 && visible > 0.02) {
+                discs.push({
+                  x: partX,
+                  y: partY,
+                  radius: radius * 0.15,
+                  inner: 0,
+                  colour: dim(palette.cursor, 0.55 * visible),
+                });
+              }
+            } else if (judgedParts !== null && judgedParts[p] === 0) {
+              discs.push({
+                x: partX,
+                y: partY,
+                radius: radius * 0.26,
+                inner: 0.5,
+                colour: dim(palette.judged[0]!, 0.9),
+              });
+            }
+          }
+        }
       }
 
       // A ring rather than a disc: the object outline, at the object radius.

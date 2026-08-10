@@ -62,6 +62,10 @@ const DISC_FLOATS = 8; // centre 2, shape 2, tint 4
 const BODY_FLOATS = 9; // point 2, normal 2, side 1, tint 4
 const BODY_TINT_OFFSET = 20; // bytes into the vertex: (2 + 2 + 1) floats
 
+/** Wedges per rounded slider-body end cap. Eight is visually a semicircle at
+ *  any radius this field draws; the shader's feather hides the facets. */
+const CAP_STEPS = 8;
+
 function compile(gl: WebGL2RenderingContext, type: number, source: string): WebGLShader {
   const shader = gl.createShader(type);
   if (!shader) throw new Error("could not create a shader object");
@@ -254,7 +258,10 @@ export class PlayfieldRenderer {
       gl.bindVertexArray(this.bodyVao);
 
       let vertices = 0;
-      for (const ribbon of ribbons) vertices += ribbon.count * 2;
+      for (const ribbon of ribbons) {
+        vertices += ribbon.count * 2;
+        if (ribbon.count >= 2) vertices += 2 * (CAP_STEPS * 2 + 1);
+      }
       const needed = vertices * BODY_FLOATS;
       if (this.bodyScratch.length < needed) this.bodyScratch = new Float32Array(needed * 2);
       const scratch = this.bodyScratch;
@@ -267,6 +274,14 @@ export class PlayfieldRenderer {
       for (const ribbon of ribbons) {
         const start = at / BODY_FLOATS;
         const [r, g, b, a] = ribbon.colour;
+        let firstX = 0;
+        let firstY = 0;
+        let firstNx = 0;
+        let firstNy = 1;
+        let lastX = 0;
+        let lastY = 0;
+        let lastNx = 0;
+        let lastNy = 1;
         for (let i = 0; i < ribbon.count; i++) {
           const index = (ribbon.offset + i) * 2;
           const x = ribbon.points[index]!;
@@ -282,6 +297,16 @@ export class PlayfieldRenderer {
           const magnitude = Math.hypot(dx, dy) || 1;
           const nx = -dy / magnitude;
           const ny = dx / magnitude;
+          if (i === 0) {
+            firstX = x;
+            firstY = y;
+            firstNx = nx;
+            firstNy = ny;
+          }
+          lastX = x;
+          lastY = y;
+          lastNx = nx;
+          lastNy = ny;
           for (const side of [-1, 1]) {
             scratch[at++] = x;
             scratch[at++] = y;
@@ -295,6 +320,52 @@ export class PlayfieldRenderer {
           }
         }
         starts.push([start, ribbon.count * 2]);
+
+        // Rounded end caps, in the same depth-tested pass as the body. A disc
+        // laid over the end in the blended pass would double-composite where
+        // it overlaps the ribbon; a fan whose `side` runs 0 at the end point
+        // to 1 at the rim continues the body's own centre-distance metric, so
+        // caps and body resolve by depth into one flat coat exactly like the
+        // body's self-overlaps do. Sweeping the edge normal through the
+        // outward tangent covers the half-disc past the end and nothing more.
+        if (ribbon.count >= 2) {
+          const cap = (px: number, py: number, nx: number, ny: number, sweep: number) => {
+            const from = at / BODY_FLOATS;
+            for (let k = 0; k <= CAP_STEPS; k++) {
+              const theta = (k / CAP_STEPS) * Math.PI * sweep;
+              const cos = Math.cos(theta);
+              const sin = Math.sin(theta);
+              const rx = nx * cos - ny * sin;
+              const ry = nx * sin + ny * cos;
+              scratch[at++] = px;
+              scratch[at++] = py;
+              scratch[at++] = rx;
+              scratch[at++] = ry;
+              scratch[at++] = 1;
+              scratch[at++] = r;
+              scratch[at++] = g;
+              scratch[at++] = b;
+              scratch[at++] = a;
+              if (k < CAP_STEPS) {
+                scratch[at++] = px;
+                scratch[at++] = py;
+                scratch[at++] = rx;
+                scratch[at++] = ry;
+                scratch[at++] = 0;
+                scratch[at++] = r;
+                scratch[at++] = g;
+                scratch[at++] = b;
+                scratch[at++] = a;
+              }
+            }
+            starts.push([from, CAP_STEPS * 2 + 1]);
+          };
+          // Rotating the left normal by -90° lands on the forward tangent, so
+          // the end cap sweeps negative and the start cap positive to bulge
+          // outward past their respective ends.
+          cap(lastX, lastY, lastNx, lastNy, -1);
+          cap(firstX, firstY, firstNx, firstNy, 1);
+        }
       }
 
       gl.bindBuffer(gl.ARRAY_BUFFER, this.bodyVertices);
