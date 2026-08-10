@@ -21,6 +21,13 @@ says.
   rule the estimator was validated against. Assigned fresh on every recompute,
   because a play arriving late can merge two sittings that looked separate.
 
+- **The present.** When the collect journal has recorded a settings change,
+  the verdict is computed from the plays under the settings now in force —
+  the same refusal to pool across a change that `forge diagnose` makes. The
+  older plays are not discarded: they become the before side of the progress
+  view, where the two eras are estimated separately and only the difference
+  crosses the boundary.
+
 - **The oracle.** Never claimed. Nothing in a `forge serve` run has compared
   these simulations object by object against an independent judge, so
   `oracle_agreement` is `None`, `may_recommend` is false, and the payload says
@@ -47,6 +54,7 @@ from typing import Any
 
 from osuforge.analysis.clustering import assign_sessions
 from osuforge.analysis.corpus import Entry, beatmap_reading, by_beatmap, diagnose
+from osuforge.analysis.progress import fill_epochs, progress
 from osuforge.replay.validate import Agreement, CorpusHealth
 from osuforge.server.protocol import corpus_payload
 
@@ -69,6 +77,12 @@ class _Facts:
     agreement: Agreement
     agreement_reason: str
     fractional_windows: bool
+
+    epoch: str | None = None
+    """The settings fingerprint the collect journal recorded, if it has one.
+
+    `None` for a play the journal has not seen — the ordinary state of a play
+    made minutes ago, and of every play when no journal exists."""
 
 
 class CorpusState:
@@ -104,6 +118,7 @@ class CorpusState:
         agreement: Agreement,
         agreement_reason: str,
         fractional_windows: bool,
+        epoch: str | None = None,
     ) -> None:
         """Record one analysed play. Re-adding a name replaces it."""
         self._facts[name] = _Facts(
@@ -117,6 +132,7 @@ class CorpusState:
             agreement=agreement,
             agreement_reason=agreement_reason,
             fractional_windows=fractional_windows,
+            epoch=epoch,
         )
 
     def payload(self) -> dict[str, Any] | None:
@@ -157,23 +173,45 @@ class CorpusState:
         }
 
         sessions = assign_sessions({name: fact.played_at for name, fact in believed.items()})
-        entries = [
-            Entry(
-                replay=name,
-                beatmap_hash=fact.beatmap_hash,
-                beatmap=fact.beatmap,
-                played_at=fact.played_at,
-                session=sessions[name],
-                errors=fact.errors,
-                miss_rate=fact.miss_rate,
-                accuracy=fact.accuracy,
-                breaks=fact.breaks,
-            )
-            for name, fact in believed.items()
-        ]
+        ordered = sorted(
+            (
+                Entry(
+                    replay=name,
+                    beatmap_hash=fact.beatmap_hash,
+                    beatmap=fact.beatmap,
+                    played_at=fact.played_at,
+                    session=sessions[name],
+                    errors=fact.errors,
+                    miss_rate=fact.miss_rate,
+                    accuracy=fact.accuracy,
+                    breaks=fact.breaks,
+                )
+                for name, fact in believed.items()
+            ),
+            key=lambda entry: entry.played_at,
+        )
 
-        diagnosis = diagnose(entries, seed=self._seed)
-        per_beatmap = by_beatmap(entries)
+        # The verdict is about the settings now in force. Pooling across a
+        # recorded change would average two configurations into one answer
+        # that is neither — the same refusal `forge diagnose` makes — so
+        # older-epoch plays leave the diagnosis and are named for it. They
+        # are not discarded: they are the before side of the progress view.
+        recorded = {name: fact.epoch for name, fact in believed.items() if fact.epoch is not None}
+        filled = fill_epochs(ordered, recorded)
+        current = filled[ordered[-1].replay] if ordered else None
+        out_of_epoch: dict[str, str] = {}
+        present: list[Entry] = []
+        for entry in ordered:
+            epoch = filled[entry.replay]
+            if current is not None and epoch is not None and epoch != current:
+                out_of_epoch[entry.replay] = (
+                    f"played under settings {epoch}, not the current {current}"
+                )
+            else:
+                present.append(entry)
+
+        diagnosis = diagnose(present, seed=self._seed)
+        per_beatmap = by_beatmap(present)
         health = CorpusHealth(
             total=len(facts),
             exact=sum(1 for fact in facts.values() if fact.agreement is Agreement.EXACT),
@@ -185,8 +223,12 @@ class CorpusState:
         return corpus_payload(
             diagnosis,
             per_beatmap=per_beatmap,
-            beatmaps_played=len({entry.beatmap_hash for entry in entries}),
+            beatmaps_played=len({entry.beatmap_hash for entry in present}),
             health=health,
-            unreproduced=unreproduced,
+            unreproduced={**unreproduced, **out_of_epoch},
             reading=beatmap_reading(diagnosis.bias, per_beatmap),
+            # Over everything believed, deliberately across epochs: the
+            # boundary is the point of the view, and the sides are estimated
+            # separately rather than pooled.
+            progress=progress(ordered, epochs=recorded, seed=self._seed),
         )

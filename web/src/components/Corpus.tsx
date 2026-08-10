@@ -1,4 +1,5 @@
-import type { Corpus, CorpusAxis, CorpusBeatmap } from "@/lib/protocol";
+import type { Corpus, CorpusAxis, CorpusBeatmap, CorpusProgress } from "@/lib/protocol";
+import { ProgressChart } from "@/components/ProgressChart";
 import type { Key } from "@/i18n";
 
 /**
@@ -71,6 +72,65 @@ function AxisRow({ axis, t }: { axis: CorpusAxis; t: CorpusPanelProps["t"] }) {
   );
 }
 
+function ProgressSection({
+  progress,
+  t,
+}: {
+  progress: CorpusProgress;
+  t: CorpusPanelProps["t"];
+}) {
+  const shift = progress.shift;
+  if (progress.points.length === 0 && !progress.insufficient) return null;
+
+  return (
+    <section>
+      <h2 className="eyebrow mb-sm">{t("progress.heading")}</h2>
+      {progress.boundary && (
+        <p className="mb-md max-w-[70ch] text-body-sm text-mute">{progress.boundary.label}</p>
+      )}
+      {progress.points.length > 0 && <ProgressChart progress={progress} t={t} />}
+
+      {shift ? (
+        <div className="mt-md">
+          {/* The verdict leads; the sides that produced it follow, each with
+              the interval and counts that make it checkable. */}
+          <p className="max-w-[70ch] text-body-md text-ink">{shift.verdict}</p>
+          <div className="mt-sm flex flex-col gap-xxs">
+            {(["before", "after"] as const).map((era) => {
+              const side = era === "before" ? shift.before : shift.after;
+              return (
+                <div key={era} className="eyebrow flex items-baseline gap-sm normal-case tracking-normal">
+                  <span className="w-[7ch] shrink-0 uppercase tracking-[0.08em]">
+                    {t(era === "before" ? "progress.before" : "progress.after")}
+                  </span>
+                  <span className="font-mono tabular-nums text-body">
+                    {side.mean === null ? "—" : `${side.mean >= 0 ? "+" : ""}${side.mean.toFixed(1)} ms`}{" "}
+                    ({side.ci_low === null ? "—" : `${side.ci_low >= 0 ? "+" : ""}${side.ci_low.toFixed(1)}`}{" "}
+                    to {side.ci_high === null ? "—" : `${side.ci_high >= 0 ? "+" : ""}${side.ci_high.toFixed(1)}`})
+                  </span>
+                  <span>{t("progress.sideCounts", { n: side.replays, s: side.sessions })}</span>
+                </div>
+              );
+            })}
+          </div>
+          {shift.spread_before !== null && shift.spread_after !== null && (
+            <p className="mt-sm max-w-[70ch] text-body-sm text-mute">
+              {t("progress.spreadNote", {
+                b: shift.spread_before.toFixed(1),
+                a: shift.spread_after.toFixed(1),
+              })}
+            </p>
+          )}
+        </div>
+      ) : (
+        progress.insufficient && (
+          <p className="mt-md max-w-[70ch] text-body-sm text-mute">{progress.insufficient}</p>
+        )
+      )}
+    </section>
+  );
+}
+
 function BeatmapRow({ map, t }: { map: CorpusBeatmap; t: CorpusPanelProps["t"] }) {
   return (
     <li className="hairline-b py-md last:border-0">
@@ -139,6 +199,8 @@ export function CorpusPanel({ corpus, t }: CorpusPanelProps) {
               ))}
             </ul>
           </section>
+
+          {corpus.progress && <ProgressSection progress={corpus.progress} t={t} />}
 
           {corpus.beatmaps.reported.length > 0 && (
             <section>

@@ -77,6 +77,20 @@ const en = {
   "corpus.thinMaps": "{n} more map(s) played too little to report alone.",
   "corpus.excluded": "{n} play(s) not in this answer",
 
+  "progress.heading": "Did it change",
+  "progress.chartLabel":
+    "Mean hit error per session, with the before and after intervals around the boundary",
+  "progress.before": "before",
+  "progress.after": "after",
+  "progress.boundarySettings": "settings changed",
+  "progress.boundaryMidpoint": "midpoint",
+  "progress.sideCounts": "{n} replay(s) in {s} session(s)",
+  "progress.spreadNote":
+    "Spread {b} → {a} ms. A description — no interval is claimed on this difference.",
+  "progress.table": "The sessions, as a table",
+  "progress.tableSession": "Session",
+  "progress.tableSpread": "Spread",
+
   "settings.heading": "Hardware",
   "settings.declared": "Declared, not measured — no file on disk records any of this.",
   "settings.dpi": "Mouse DPI",
@@ -153,6 +167,19 @@ const ko: Record<Key, string> = {
   "corpus.shifts": "단독으로도 치우침",
   "corpus.thinMaps": "{n}개 맵은 플레이가 적어 따로 보고하지 않습니다.",
   "corpus.excluded": "이 답에 없는 플레이 {n}개",
+
+  "progress.heading": "바뀌었나",
+  "progress.chartLabel": "세션별 평균 히트 오차와 경계 전후의 신뢰구간",
+  "progress.before": "이전",
+  "progress.after": "이후",
+  "progress.boundarySettings": "설정 변경",
+  "progress.boundaryMidpoint": "중간 지점",
+  "progress.sideCounts": "세션 {s}개의 리플레이 {n}개",
+  "progress.spreadNote":
+    "산포 {b} → {a} ms. 서술일 뿐이며, 이 차이에는 구간을 주장하지 않습니다.",
+  "progress.table": "세션을 표로 보기",
+  "progress.tableSession": "세션",
+  "progress.tableSpread": "산포",
 
   "settings.heading": "하드웨어",
   "settings.declared": "측정이 아니라 선언한 값입니다 — 어느 파일에도 기록되어 있지 않습니다.",

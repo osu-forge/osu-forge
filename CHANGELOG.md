@@ -136,6 +136,22 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   too thin, the per-beatmap comparison with a one-sentence reading of pooled
   against per-map intervals (`osuforge.analysis.corpus.beatmap_reading`), and
   the excluded plays with their reasons.
+- `osuforge.analysis.progress` — whether it changed, and by how much. The
+  corpus split at the most recent settings change the collect journal
+  recorded (or at the middle of the sessions, labelled as only that), each
+  side estimated on its own, and the difference reported with an interval of
+  its own — the wider of a Welch-corrected cluster route and a hierarchical
+  bootstrap on the differenced draws. Sides too thin to compare are refused
+  with the side and the missing ingredient named.
+- The serve corpus is now epoch-aware: the verdict is computed from the plays
+  under the settings in force — the same refusal to pool across a change that
+  `forge diagnose` makes — while the older plays become the before side of a
+  progress view on the panel: one dot per session, the two eras' intervals,
+  the boundary marked for what it is, and the shift verdict beneath. Plays
+  the journal has not seen inherit the newest fingerprint rather than
+  vanishing from the page they just appeared on.
+- `forge diagnose --all-epochs` prints the same comparison, and the default
+  run points at it when the settings filter left an era out.
 
 ### Changed
 - Integration tests are deselected by default and require an environment
