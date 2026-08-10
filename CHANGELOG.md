@@ -199,6 +199,16 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   and the one place the game shows nothing. Body ends are rounded with caps
   drawn inside the same depth-tested pass as the body, so they resolve into
   one flat coat instead of compositing a seam over the ribbon.
+- Slider motion, verified against the real pipeline and then made right. A
+  genuine `.osu` and `.osr` were driven through `judge` and the real wire
+  encoders and played back under frame capture, so ball travel, the
+  declared-length trim, the repeat arrow and snaking are measured facts
+  rather than impressions from fixtures. Fixed on the way: the ball now
+  interpolates between path samples instead of snapping to the five-pixel
+  grid, the body snakes out of the head across the first half of the preempt
+  with ticks appearing as it reaches them, and the HUD counts a judgement
+  when it is decided — a slider at its end, not while the ball is still
+  travelling.
 - The player shows the play as it stands at the playhead. Exact running
   accuracy, unstable rate and judgement counts — every judgement at or
   before the clock, nothing projected, and deliberately no running combo

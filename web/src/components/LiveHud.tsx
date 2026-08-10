@@ -56,14 +56,23 @@ export function LiveHud({ header, clock, t }: LiveHudProps) {
     for (let i = 0; i < n; i++) {
       const object = header.objects[i]!;
       const judgement = header.judgements[i];
-      times[i] = object.t;
+      // A judgement exists once it is decided: at the press for a circle, at
+      // the end for a slider or spinner. Counting a slider at its start would
+      // show its final grade while the ball is still travelling.
+      times[i] = object.end;
       const grade = Math.min(3, Math.max(0, judgement?.grade ?? 3));
       counts[grade]! += 1;
       for (let g = 0; g < 4; g++) grades[g]![i] = counts[g]!;
       if (judgement && judgement.error !== null) {
-        judged.push({ time: object.t, error: judgement.error, grade });
+        // The error bar is about presses, and a press happens at the head —
+        // a slider's timing error is measured there whatever its end decides.
+        judged.push({ time: object.t + judgement.error, error: judgement.error, grade });
       }
     }
+    // Press times can land slightly out of object order — an early press on
+    // one note after a late press on the last — and the scan below assumes
+    // time order.
+    judged.sort((a, b) => a.time - b.time);
     return { times, grades, judged };
   }, [header]);
 
