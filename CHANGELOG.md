@@ -228,6 +228,14 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   recorded timestamps — and the panel states the one limit that matters: the
   recording samples at the render framerate, so an edge lands up to one sample
   gap late and a wait carries one at each end.
+- Playback is regression-tested end to end. A map and a replay are generated at
+  test time, served by the real server on a real socket, played in a real
+  browser, and asserted on by counting the pixels that moved between two seeks
+  and the pixels that moved between two captures of the same paused frame — the
+  only kind of test that could have caught a clock at the wrong speed or a ball
+  on a five-pixel grid. It runs opt-in (`pytest -m e2e`) and in a new
+  `e2e-playback` CI job, which also type-checks and builds the web app in CI
+  for the first time.
 
 ### Changed
 - `forge serve` reads `osu!.db` for per-beatmap local offsets, with a `--db`
