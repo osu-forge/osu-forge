@@ -175,6 +175,50 @@ export interface CorpusBeatmap {
   excludes_zero: boolean;
 }
 
+export interface ProgressPoint {
+  session: number;
+  started_at: string;
+  replays: number;
+  hits: number;
+  /** Real milliseconds, early negative. A description of one sitting — no
+   *  interval is claimed on a single session. */
+  mean_error: number | null;
+  spread_ms: number | null;
+}
+
+export interface ProgressSide {
+  mean: number | null;
+  ci_low: number | null;
+  ci_high: number | null;
+  replays: number;
+  sessions: number;
+  hits: number;
+}
+
+export interface ProgressShift {
+  before: ProgressSide;
+  after: ProgressSide;
+  /** `after − before`, real milliseconds. Positive means the bias moved later. */
+  difference: number | null;
+  ci_low: number | null;
+  ci_high: number | null;
+  ci_source: string;
+  spread_before: number | null;
+  spread_after: number | null;
+  moved: boolean;
+  toward_zero: boolean;
+  verdict: string;
+}
+
+export interface CorpusProgress {
+  points: ProgressPoint[];
+  /** `settings` when the collect journal recorded a change; `midpoint` when
+   *  the split is only the middle of the sessions. */
+  boundary: { kind: string; at: string; label: string } | null;
+  shift: ProgressShift | null;
+  insufficient: string | null;
+}
+
 export interface Corpus {
   replays: number;
   sessions: number;
@@ -208,6 +252,9 @@ export interface Corpus {
     blockers: string[];
     summary: string;
   };
+  /** The corpus over time. `null` when the server did not compute it, which
+   *  is not the same statement as "nothing has changed". */
+  progress: CorpusProgress | null;
   beatmaps: {
     played: number;
     /** One sentence reading the pooled interval against the per-map ones. */

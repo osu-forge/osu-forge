@@ -359,6 +359,7 @@ def _diagnose(args: argparse.Namespace) -> int:
     """What the corpus supports, rather than what one play happened to do."""
     from osuforge.analysis.corpus import by_beatmap, diagnose
     from osuforge.analysis.gather import gather
+    from osuforge.analysis.progress import progress
     from osuforge.sources import osudb
 
     try:
@@ -388,6 +389,13 @@ def _diagnose(args: argparse.Namespace) -> int:
     collected = gather(paths, BeatmapIndex(songs_dir), offsets=offsets)
     result = diagnose(collected.entries, decomposition=collected.decomposition)
     maps = by_beatmap(collected.entries) if result.usable else {}
+
+    # Only when the corpus spans every epoch: the point of the split is the
+    # settings change, and the default run has already filtered one era out.
+    across = None
+    if args.all_epochs:
+        recorded = {entry.replay: entry.epoch for entry in journal.entries()}
+        across = progress(collected.entries, epochs=recorded)
 
     if args.json:
         print(
@@ -442,6 +450,38 @@ def _diagnose(args: argparse.Namespace) -> int:
                         }
                         for name, mean in maps.items()
                     },
+                    "progress": (
+                        None
+                        if across is None
+                        else {
+                            "boundary": (
+                                None
+                                if across.boundary_kind is None or across.boundary_at is None
+                                else {
+                                    "kind": across.boundary_kind,
+                                    "at": across.boundary_at.isoformat(),
+                                    "label": across.boundary_label,
+                                }
+                            ),
+                            "insufficient": across.insufficient,
+                            "shift": (
+                                None
+                                if across.shift is None
+                                else {
+                                    "before_mean": across.shift.before.mean,
+                                    "after_mean": across.shift.after.mean,
+                                    "difference": across.shift.difference,
+                                    "ci_low": across.shift.ci_low,
+                                    "ci_high": across.shift.ci_high,
+                                    "ci_source": across.shift.ci_source,
+                                    "spread_before": _finite(across.shift.spread_before),
+                                    "spread_after": _finite(across.shift.spread_after),
+                                    "moved": across.shift.moved,
+                                    "verdict": across.shift.verdict(),
+                                }
+                            ),
+                        }
+                    ),
                 },
                 indent=2,
             )
@@ -455,6 +495,12 @@ def _diagnose(args: argparse.Namespace) -> int:
     print(collected.summary(), file=out)
     if out_of_epoch:
         print(f"{len(out_of_epoch)} replay(s) left out by the settings filter", file=out)
+        if any("played under settings" in reason for reason in out_of_epoch.values()):
+            print(
+                "Settings changed inside this corpus. Run with --all-epochs to see "
+                "what moved across the change.",
+                file=out,
+            )
     if not collected.offsets_known:
         print(f"  {offsets_finding.title}", file=out)
 
@@ -490,6 +536,28 @@ def _diagnose(args: argparse.Namespace) -> int:
             "looks like.",
             file=out,
         )
+
+    if across is not None and across.boundary_kind is not None:
+        print(f"\nAcross {across.boundary_label}:", file=out)
+        if across.shift is not None:
+            shift = across.shift
+            for side, estimated in (("before", shift.before), ("after ", shift.after)):
+                print(
+                    f"  {side}  {estimated.mean:+6.1f} ms "
+                    f"({estimated.ci_low:+.1f} to {estimated.ci_high:+.1f}, "
+                    f"{estimated.n_replays} replays in {estimated.n_sessions} sessions)",
+                    file=out,
+                )
+            for line in _wrap(shift.verdict(), 78, "  "):
+                print(line, file=out)
+            print(
+                f"  spread {shift.spread_before:.1f} -> {shift.spread_after:.1f} ms — a "
+                "description; no interval is claimed on this difference",
+                file=out,
+            )
+        elif across.insufficient:
+            for line in _wrap(across.insufficient, 78, "  "):
+                print(line, file=out)
 
     for name, reason in list(result.dropped.items())[:5]:
         print(f"  excluded: {name}: {reason}", file=out)
@@ -592,6 +660,18 @@ def _serve(args: argparse.Namespace) -> int:
     skipped: dict[str, int] = {}
     corpus = CorpusState()
 
+    # Best effort, never fatal: the journal is what knows when settings
+    # changed. Without one the verdict pools everything it believes and the
+    # progress view falls back to splitting on time — a weaker answer than
+    # with the record, not a reason to refuse to serve.
+    try:
+        journal_epochs = {
+            entry.replay: entry.epoch
+            for entry in Journal(args.journal or default_journal_path()).entries()
+        }
+    except OSError:
+        journal_epochs = {}
+
     def note(reason: str) -> None:
         skipped[reason] = skipped.get(reason, 0) + 1
 
@@ -639,6 +719,7 @@ def _serve(args: argparse.Namespace) -> int:
                 agreement=play.agreement,
                 agreement_reason=play.agreement_reason,
                 fractional_windows=simulation.fractional_windows,
+                epoch=journal_epochs.get(path.name),
             )
         return ReplayPayload.build(
             replay_name=path.name,
@@ -1024,6 +1105,14 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     serve_cmd.add_argument("--replays", type=Path, default=None, help="folder of .osr files")
     serve_cmd.add_argument("--songs", type=Path, default=None, help="beatmap folder")
+    serve_cmd.add_argument(
+        "--journal",
+        type=Path,
+        default=None,
+        help=(
+            f"the settings history the corpus panel splits on (default: {default_journal_path()})"
+        ),
+    )
     serve_cmd.add_argument(
         "--site", type=Path, default=None, help="built web/dist (default: found from the checkout)"
     )

@@ -57,6 +57,7 @@ import osu_forge_diffcalc as diffcalc
 
 from osuforge.analysis.clustering import ClusteredMean
 from osuforge.analysis.corpus import Diagnosis
+from osuforge.analysis.progress import Progress
 from osuforge.replay.model import ReplayFrame
 from osuforge.replay.simulate import Grade, Simulation
 from osuforge.replay.validate import CorpusHealth
@@ -243,6 +244,66 @@ def analysis_payload(play: Any) -> dict[str, Any]:
     }
 
 
+def _estimate_block(found: ClusteredMean) -> dict[str, Any]:
+    return {
+        "mean": _finite(found.mean),
+        "ci_low": _finite(found.ci_low),
+        "ci_high": _finite(found.ci_high),
+        "replays": found.n_replays,
+        "sessions": found.n_sessions,
+        "hits": found.n_hits,
+    }
+
+
+def _progress_block(found: Progress) -> dict[str, Any]:
+    """The corpus over time, as the page needs it.
+
+    The per-session points are descriptions and travel without intervals; the
+    only interval in this block sits on the difference, because that is the
+    only place there are enough sessions to earn one.
+    """
+    boundary: dict[str, Any] | None = None
+    if found.boundary_kind is not None and found.boundary_at is not None:
+        boundary = {
+            "kind": found.boundary_kind,
+            "at": found.boundary_at.isoformat(),
+            "label": found.boundary_label,
+        }
+    shift = found.shift
+    return {
+        "points": [
+            {
+                "session": point.session,
+                "started_at": point.started_at.isoformat(),
+                "replays": point.replays,
+                "hits": point.hits,
+                "mean_error": _finite(point.mean_error),
+                "spread_ms": _finite(point.spread_ms),
+            }
+            for point in found.points
+        ],
+        "boundary": boundary,
+        "shift": (
+            None
+            if shift is None
+            else {
+                "before": _estimate_block(shift.before),
+                "after": _estimate_block(shift.after),
+                "difference": _finite(shift.difference),
+                "ci_low": _finite(shift.ci_low),
+                "ci_high": _finite(shift.ci_high),
+                "ci_source": shift.ci_source,
+                "spread_before": _finite(shift.spread_before),
+                "spread_after": _finite(shift.spread_after),
+                "moved": shift.moved,
+                "toward_zero": shift.toward_zero,
+                "verdict": shift.verdict(),
+            }
+        ),
+        "insufficient": found.insufficient,
+    }
+
+
 def corpus_payload(
     diagnosis: Diagnosis,
     *,
@@ -251,6 +312,7 @@ def corpus_payload(
     health: CorpusHealth,
     unreproduced: dict[str, str],
     reading: str | None = None,
+    progress: Progress | None = None,
 ) -> dict[str, Any]:
     """The corpus diagnosis, as the page needs it.
 
@@ -309,6 +371,9 @@ def corpus_payload(
             "blockers": health.blockers(),
             "summary": health.summary(),
         },
+        # Absent rather than empty when the caller did not compute it, so a
+        # page can tell "no progress view here" from "nothing has changed".
+        "progress": None if progress is None else _progress_block(progress),
         "beatmaps": {
             "played": beatmaps_played,
             "reading": reading,

@@ -29,10 +29,13 @@ def feed(
     beatmap: str = "map-a",
     agreement: Agreement = Agreement.EXACT,
     seed: int = 3,
+    first_session: int = 0,
+    epoch: str | None = None,
 ) -> None:
     """Plays on separate days, well past the session gap."""
     rng = np.random.default_rng(seed)
-    for session in range(sessions):
+    for offset in range(sessions):
+        session = first_session + offset
         for index in range(replays):
             state.add(
                 f"{beatmap}-s{session}r{index}.osr",
@@ -46,6 +49,7 @@ def feed(
                 agreement=agreement,
                 agreement_reason="all judgements reproduce",
                 fractional_windows=False,
+                epoch=epoch,
             )
 
 
@@ -160,6 +164,56 @@ class TestAnswerShape:
         answer = state.recompute()
         assert answer["beatmaps"]["reading"] is not None
         assert "pooled" in answer["beatmaps"]["reading"]
+
+
+class TestEpochs:
+    def test_a_recorded_change_splits_verdict_from_history(self) -> None:
+        # Twelve replays under the old settings, twelve under the new. The
+        # verdict is about the new era only; the old one is named for what it
+        # is and becomes the before side of the progress view.
+        state = CorpusState()
+        feed(state, sessions=4, epoch="aaaa000000000000", mean=8.0)
+        feed(state, sessions=4, first_session=4, epoch="bbbb111111111111", mean=1.0, seed=9)
+        answer = state.recompute()
+
+        assert answer["replays"] == 12
+        assert sum("not the current" in reason for reason in answer["excluded"].values()) == 12
+
+        assert answer["progress"] is not None
+        boundary = answer["progress"]["boundary"]
+        assert boundary is not None and boundary["kind"] == "settings"
+        shift = answer["progress"]["shift"]
+        assert shift is not None
+        assert shift["before"]["replays"] == 12
+        assert shift["after"]["replays"] == 12
+        assert shift["difference"] is not None and shift["difference"] < 0
+        assert "verdict" in shift
+
+    def test_plays_the_journal_has_not_seen_join_the_current_era(self) -> None:
+        # The ordinary live state: the newest plays are not collected yet.
+        # They inherit the newest fingerprint rather than being dropped, or
+        # every play made while the page is open would vanish from the verdict.
+        state = CorpusState()
+        feed(state, sessions=3, epoch="aaaa000000000000")
+        feed(state, sessions=3, first_session=3, epoch=None, seed=9)
+        answer = state.recompute()
+        assert answer["replays"] == 18
+        assert not answer["excluded"]
+
+    def test_without_any_journal_the_behaviour_is_unchanged(self) -> None:
+        state = CorpusState()
+        feed(state, sessions=4)
+        answer = state.recompute()
+        assert answer["replays"] == 12
+        assert answer["progress"] is not None
+        boundary = answer["progress"]["boundary"]
+        assert boundary is not None and boundary["kind"] == "midpoint"
+
+    def test_the_progress_block_is_json_all_the_way_down(self) -> None:
+        state = CorpusState()
+        feed(state, sessions=4, epoch="aaaa000000000000", mean=8.0)
+        feed(state, sessions=4, first_session=4, epoch="bbbb111111111111", mean=1.0, seed=9)
+        json.dumps(state.recompute(), allow_nan=False)
 
 
 class TestCaching:
