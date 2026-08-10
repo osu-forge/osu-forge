@@ -13,7 +13,6 @@ from __future__ import annotations
 
 import ctypes
 import sys
-from ctypes import wintypes
 from dataclasses import dataclass
 
 from osuforge.probes.base import ProbeResult
@@ -33,21 +32,27 @@ _FLAG_ON = 0x00000001
 _FLAG_HOTKEY_ACTIVE = 0x00000004
 
 
-class _FLAGSTRUCT(ctypes.Structure):
-    """STICKYKEYS and TOGGLEKEYS share this shape."""
+# `ctypes.wintypes` does not exist off Windows and these layouts need it while
+# the class body runs, so leaving them at module scope makes the whole command
+# line unimportable there. Nothing below is reached before `probe_accessibility`
+# has already refused on a non-Windows platform.
+if sys.platform == "win32":
+    from ctypes import wintypes
 
-    _fields_ = (("cbSize", wintypes.UINT), ("dwFlags", wintypes.DWORD))
+    class _FLAGSTRUCT(ctypes.Structure):
+        """STICKYKEYS and TOGGLEKEYS share this shape."""
 
+        _fields_ = (("cbSize", wintypes.UINT), ("dwFlags", wintypes.DWORD))
 
-class _FILTERKEYS(ctypes.Structure):
-    _fields_ = (
-        ("cbSize", wintypes.UINT),
-        ("dwFlags", wintypes.DWORD),
-        ("iWaitMSec", wintypes.INT),
-        ("iDelayMSec", wintypes.INT),
-        ("iRepeatMSec", wintypes.INT),
-        ("iBounceMSec", wintypes.INT),
-    )
+    class _FILTERKEYS(ctypes.Structure):
+        _fields_ = (
+            ("cbSize", wintypes.UINT),
+            ("dwFlags", wintypes.DWORD),
+            ("iWaitMSec", wintypes.INT),
+            ("iDelayMSec", wintypes.INT),
+            ("iRepeatMSec", wintypes.INT),
+            ("iBounceMSec", wintypes.INT),
+        )
 
 
 @dataclass(frozen=True, slots=True)

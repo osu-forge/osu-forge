@@ -17,7 +17,6 @@ from __future__ import annotations
 
 import ctypes
 import sys
-from ctypes import wintypes
 from dataclasses import dataclass
 
 from osuforge.probes.base import ProbeResult
@@ -30,25 +29,31 @@ _SOURCE = "EnumWindows + GetWindowThreadProcessId + MonitorFromWindow + GetMonit
 
 _MONITOR_DEFAULTTONEAREST = 0x00000002
 
-_ENUM_WINDOWS_PROC = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
+# Neither `ctypes.wintypes` nor `ctypes.WINFUNCTYPE` exists off Windows, and
+# both are needed while these statements run, so leaving them at module scope
+# makes the whole command line unimportable there. Nothing below is reached
+# before `probe_osu_window_monitor` has already refused on a non-Windows
+# platform.
+if sys.platform == "win32":
+    from ctypes import wintypes
 
+    _ENUM_WINDOWS_PROC = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
 
-class _RECT(ctypes.Structure):
-    _fields_ = (
-        ("left", ctypes.c_long),
-        ("top", ctypes.c_long),
-        ("right", ctypes.c_long),
-        ("bottom", ctypes.c_long),
-    )
+    class _RECT(ctypes.Structure):
+        _fields_ = (
+            ("left", ctypes.c_long),
+            ("top", ctypes.c_long),
+            ("right", ctypes.c_long),
+            ("bottom", ctypes.c_long),
+        )
 
-
-class _MONITORINFO(ctypes.Structure):
-    _fields_ = (
-        ("cbSize", wintypes.DWORD),
-        ("rcMonitor", _RECT),
-        ("rcWork", _RECT),
-        ("dwFlags", wintypes.DWORD),
-    )
+    class _MONITORINFO(ctypes.Structure):
+        _fields_ = (
+            ("cbSize", wintypes.DWORD),
+            ("rcMonitor", _RECT),
+            ("rcWork", _RECT),
+            ("dwFlags", wintypes.DWORD),
+        )
 
 
 @dataclass(frozen=True, slots=True)

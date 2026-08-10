@@ -305,6 +305,13 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   interpreter down with no traceback. The engine still gets the smaller binary.
 
 ### Fixed
+- `osuforge.cli` could not be imported anywhere but Windows. Four probe modules
+  built their `ctypes` structures from `ctypes.wintypes` while the module was
+  still loading, and that module does not exist off Windows — so the rule
+  engine, and with it the whole command line, refused at import rather than at
+  the measurement. Each module gates its Windows plumbing on the platform now.
+  The refusal happens where it always did, inside each probe, as a skip that
+  says "Windows-only" and can be read in the report.
 - The cluster route divided by zero when both sides of a boundary had sessions
   whose means all landed on the side mean exactly. Rare, but it cost the whole
   comparison rather than the one route, and the corpus that triggers it is
