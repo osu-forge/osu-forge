@@ -14,12 +14,11 @@ say nothing about playback. What is asserted is *relative*: two seeks apart must
 move thousands of pixels, and the same paused frame captured twice must not
 move at all.
 
-The server is a real process on a real socket, started from ``e2e_server.py``
-beside this file rather than from ``forge serve``. The command line imports the
-rule engine, which imports probes built on ``ctypes.WINFUNCTYPE`` at module
-scope, so it cannot start anywhere but Windows — and the browser this test needs
-runs on Linux. Everything under the command line is production code called the
-production way.
+The server is ``forge serve`` itself, a real process on a real socket, started
+the way a player starts it. That is worth more than the rendering it exists to
+check: the token-placeholder guard, the osu!.db read, the analysis cache, the
+journal, the corpus and the replay watcher are on this path and on no other one
+the suite drives.
 
 Opt in with ``pytest -m e2e``. Missing prerequisites skip by default and fail
 when ``OSU_FORGE_E2E_REQUIRE=1``, because a CI job that goes green by silently
@@ -46,6 +45,7 @@ import pytest
 
 from osuforge.replay.model import Keys
 
+from .fixtures import build_cfg
 from .replay_fixtures import build_replay
 
 pytestmark = pytest.mark.e2e
@@ -54,7 +54,6 @@ REPO = Path(__file__).resolve().parents[2]
 WEB = REPO / "web"
 SITE = WEB / "dist"
 DRIVER = WEB / "e2e" / "driver.mjs"
-LAUNCHER = Path(__file__).with_name("e2e_server.py")
 
 REQUIRE_VAR = "OSU_FORGE_E2E_REQUIRE"
 BROWSER_VAR = "OSU_FORGE_E2E_BROWSER"
@@ -150,13 +149,20 @@ def _replay_frames() -> list[tuple[int, float, float, int]]:
     return body
 
 
-def _build_world(root: Path) -> tuple[Path, Path]:
+def _build_world(root: Path) -> tuple[Path, Path, Path]:
     """A whole osu! install, small enough to fit in a temporary directory."""
     install = root / "osu!"
     songs = install / "Songs" / "1 A - E2E"
     replays = install / "Data" / "r"
     songs.mkdir(parents=True)
     replays.mkdir(parents=True)
+
+    # `forge serve` starts from a config rather than from a folder, and the
+    # folder holding it is the install every path it does not receive is read
+    # from. No osu!.db beside it: an install without one is a case the server
+    # has to answer, and answering it is part of what this now covers.
+    config = install / "osu!.tester.cfg"
+    config.write_bytes(build_cfg({"BeatmapDirectory": "Songs"}))
 
     beatmap = songs / "map.osu"
     beatmap.write_text(MAP_TEXT, encoding="utf-8")
@@ -176,7 +182,7 @@ def _build_world(root: Path) -> tuple[Path, Path]:
             frames=_replay_frames(),
         )
     )
-    return install / "Songs", replays
+    return config, install / "Songs", replays
 
 
 def _chromium() -> Path | None:
@@ -227,29 +233,47 @@ def _prerequisites() -> tuple[Path, Path]:
 
 
 @contextmanager
-def _served(*, songs: Path, replays: Path, root: Path) -> Iterator[str]:
+def _served(*, config: Path, songs: Path, replays: Path, root: Path) -> Iterator[str]:
     """A real process on a real socket, for the life of the block."""
     port = _free_port()
     log = root / "server.log"
+    # `-m` rather than the installed `forge` script, so the server runs on the
+    # same interpreter as the test. `--backfill 0` because one replay leaves
+    # nothing to backfill and the slow path should not be able to open.
     command = [
         sys.executable,
-        str(LAUNCHER),
+        "-m",
+        "osuforge.cli",
+        "serve",
+        "--config",
+        str(config),
+        "--site",
+        str(SITE),
         "--songs",
         str(songs),
         "--replays",
         str(replays),
-        "--site",
-        str(SITE),
-        "--runtime",
-        str(root / "runtime.json"),
+        "--journal",
+        str(root / "journal.jsonl"),
+        "--cache",
+        str(root / "cache.db"),
+        "--backfill",
+        "0",
         "--port",
         str(port),
     ]
+    # The token file the page authenticates with is placed from LOCALAPPDATA and
+    # is not a flag, so this is what keeps a test run out of the home directory
+    # of whoever is running it.
+    env = {**os.environ, "LOCALAPPDATA": str(root / "appdata")}
     with log.open("w", encoding="utf-8") as sink:
-        process = subprocess.Popen(command, stdout=sink, stderr=subprocess.STDOUT)
+        process = subprocess.Popen(command, stdout=sink, stderr=subprocess.STDOUT, env=env)
         url = f"http://127.0.0.1:{port}/"
         try:
-            deadline = time.monotonic() + 60.0
+            # Startup is an index, a judged replay, the analysis and a corpus
+            # pass, not just a bind: seconds rather than the fraction the
+            # launcher this replaced took.
+            deadline = time.monotonic() + 120.0
             while True:
                 if process.poll() is not None:
                     raise AssertionError(f"the server exited early:\n{log.read_text()}")
@@ -274,10 +298,10 @@ def _served(*, songs: Path, replays: Path, root: Path) -> Iterator[str]:
 
 def test_a_replay_plays_back_in_a_real_browser(tmp_path: Path) -> None:
     node, browser = _prerequisites()
-    songs, replays = _build_world(tmp_path)
+    config, songs, replays = _build_world(tmp_path)
     shots = tmp_path / "shots"
 
-    with _served(songs=songs, replays=replays, root=tmp_path) as url:
+    with _served(config=config, songs=songs, replays=replays, root=tmp_path) as url:
         driver = subprocess.run(
             [
                 str(node),

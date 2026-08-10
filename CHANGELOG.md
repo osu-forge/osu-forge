@@ -258,6 +258,14 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   progress block, and carries it in `--json`.
 
 ### Changed
+- The playback end-to-end test drives `forge serve` itself, and the test-only
+  launcher that used to stand in for it is gone. The launcher existed only
+  because the command line could not be imported off Windows; kept past that it
+  would be a second server bootstrap that nothing runs and that has already
+  drifted on fifteen behaviours, so a green run could mean the real thing is
+  broken. A green run now says the token-placeholder guard, the osu!.db read,
+  the analysis cache, the journal, the corpus recompute and the replay watcher
+  all still work, which is most of what starting up is.
 - Verification puts the same interval on the difference that the progress panel
   does — the wider of a Welch-corrected cluster route and the hierarchical
   bootstrap — where it used to report the bootstrap alone. On one corpus the two
