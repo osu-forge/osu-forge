@@ -1,10 +1,23 @@
 """An append-only record of what has been played and under what settings.
 
-One line of JSON per replay, written once and never rewritten. Append-only
+One line of JSON per record, written once and never rewritten. Append-only
 because the point is to accumulate a history that later analysis can trust: a
 file that gets rewritten is a file whose past can quietly change, and the whole
 reason this exists is to make "the offset was X when these were played" a fact
 rather than a recollection.
+
+Two kinds of record. A replay line carries no `kind` field at all, which is
+what keeps every line already on disk readable; anything else carries one, and
+a reader that meets a kind it does not know skips it rather than failing. The
+format can therefore grow without stranding the journals that exist.
+
+The second kind is the settings snapshot. A digest says two configurations
+differ but not in what, and `(old, new)` is the entire content of a prediction
+about what a change was supposed to do — so the values behind each fingerprint
+are written down as they come into force. Fix-forward only: entries recorded
+before snapshots existed keep their digest and lose nothing, but what changed
+across those boundaries is gone and readers have to say so rather than report
+an empty diff.
 
 Nothing here reads memory and nothing runs in the background. `forge collect`
 scans, appends what is new, and exits.
@@ -14,17 +27,35 @@ from __future__ import annotations
 
 import json
 import os
+from collections.abc import Iterator
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any
 
 from osuforge.collect.epoch import ConfigEpoch
 from osuforge.replay.parse import ReplayParseError, parse_path
 
-__all__ = ["JOURNAL_ENV", "Entry", "Journal", "ScanResult", "default_journal_path", "scan"]
+__all__ = [
+    "EPOCH_KIND",
+    "JOURNAL_ENV",
+    "Entry",
+    "EpochSnapshot",
+    "Journal",
+    "ScanResult",
+    "default_journal_path",
+    "scan",
+]
 
 JOURNAL_ENV = "OSU_FORGE_JOURNAL"
 """Environment variable overriding where the journal is written."""
+
+EPOCH_KIND = "epoch"
+"""Value of the `kind` field on a settings snapshot line."""
+
+_KIND = "kind"
+"""The field that says what a line is. Absent on replay entries, which is the
+compatibility guarantee: lines written before this existed still parse."""
 
 
 def default_journal_path() -> Path:
@@ -71,9 +102,33 @@ class Entry:
     observed_at: str
 
     @classmethod
-    def from_json(cls, line: str) -> Entry:
-        data = json.loads(line)
+    def from_data(cls, data: dict[str, Any]) -> Entry:
         return cls(**{field: data[field] for field in cls.__slots__})
+
+
+@dataclass(frozen=True, slots=True)
+class EpochSnapshot:
+    """The settings behind one fingerprint, as they were when it came into force.
+
+    Keyed by the digest rather than by time, because the digest is a hash of
+    exactly these values: a snapshot recorded now is equally true of every
+    entry that carries the same digest, whenever it was written.
+    """
+
+    digest: str
+    settings: dict[str, str]
+    observed_at: str
+
+    @classmethod
+    def from_data(cls, data: dict[str, Any]) -> EpochSnapshot:
+        settings = data["settings"]
+        if not isinstance(settings, dict):
+            raise TypeError("settings is not an object")
+        return cls(
+            digest=str(data["digest"]),
+            settings={str(key): str(value) for key, value in settings.items()},
+            observed_at=str(data["observed_at"]),
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -107,33 +162,80 @@ class Journal:
     def __init__(self, path: Path) -> None:
         self.path = path
 
-    def entries(self) -> list[Entry]:
+    def _records(self) -> Iterator[tuple[int, dict[str, Any]]]:
+        """Every line that parses as an object, with its line number.
+
+        One reader for all kinds. Which kind a line is stays the caller's
+        decision, so a kind added after this version was written is skipped by
+        it rather than being fatal to the whole file.
+        """
         if not self.path.exists():
-            return []
-        found: list[Entry] = []
+            return
         for number, line in enumerate(self.path.read_text("utf-8").splitlines(), start=1):
-            line = line.strip()
-            if not line:
+            stripped = line.strip()
+            if not stripped:
                 continue
             try:
-                found.append(Entry.from_json(line))
-            except (json.JSONDecodeError, KeyError, TypeError) as exc:
+                data = json.loads(stripped)
+            except json.JSONDecodeError as exc:
                 # A damaged line is skipped rather than fatal. Losing one record
                 # is better than a corrupted file making every later run fail,
                 # and appending nothing would lose the rest of the history too.
+                print(f"{self.path}:{number}: skipping unreadable entry ({exc})")
+                continue
+            if not isinstance(data, dict):
+                print(f"{self.path}:{number}: skipping unreadable entry (not an object)")
+                continue
+            yield number, data
+
+    def entries(self) -> list[Entry]:
+        found: list[Entry] = []
+        for number, data in self._records():
+            if data.get(_KIND) is not None:
+                continue
+            try:
+                found.append(Entry.from_data(data))
+            except (KeyError, TypeError) as exc:
                 print(f"{self.path}:{number}: skipping unreadable entry ({exc})")
         return found
 
     def known(self) -> set[str]:
         return {entry.replay for entry in self.entries()}
 
+    def snapshots(self) -> list[EpochSnapshot]:
+        """The recorded settings behind the fingerprints, oldest first."""
+        found: list[EpochSnapshot] = []
+        for number, data in self._records():
+            if data.get(_KIND) != EPOCH_KIND:
+                continue
+            try:
+                found.append(EpochSnapshot.from_data(data))
+            except (KeyError, TypeError) as exc:
+                print(f"{self.path}:{number}: skipping unreadable snapshot ({exc})")
+        return found
+
+    def epoch_settings(self) -> dict[str, dict[str, str]]:
+        """Fingerprint to the settings behind it, for naming what changed.
+
+        A digest recorded before snapshots existed is absent here rather than
+        empty: "nothing changed" and "what changed was never written down" are
+        different answers, and only one of them supports a prediction.
+        """
+        return {snapshot.digest: snapshot.settings for snapshot in self.snapshots()}
+
     def append(self, entries: list[Entry]) -> None:
         if not entries:
             return
+        self._write([asdict(entry) for entry in entries])
+
+    def record_epoch(self, snapshot: EpochSnapshot) -> None:
+        self._write([{_KIND: EPOCH_KIND, **asdict(snapshot)}])
+
+    def _write(self, records: list[dict[str, Any]]) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         with self.path.open("a", encoding="utf-8", newline="\n") as handle:
-            for entry in entries:
-                handle.write(json.dumps(asdict(entry), ensure_ascii=False) + "\n")
+            for record in records:
+                handle.write(json.dumps(record, ensure_ascii=False) + "\n")
 
 
 def scan(
@@ -176,6 +278,23 @@ def scan(
                 observed_at=observed_at,
             )
         )
+
+    if added:
+        # Written only alongside replays, and only when these values are not
+        # already the ones on file. Gated on both because a fingerprint nothing
+        # was played under cannot be the boundary of any comparison, and a
+        # rescan that changed nothing must not grow the file. What this buys is
+        # the invariant the comparison needs: every entry appended from here on
+        # has the settings behind its digest recorded at or before it.
+        recorded = journal.snapshots()
+        if not recorded or recorded[-1].digest != epoch.digest:
+            journal.record_epoch(
+                EpochSnapshot(
+                    digest=epoch.digest,
+                    settings=dict(epoch.settings),
+                    observed_at=observed_at,
+                )
+            )
 
     journal.append(added)
     return ScanResult(

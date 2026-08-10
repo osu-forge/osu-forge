@@ -236,6 +236,15 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   on a five-pixel grid. It runs opt-in (`pytest -m e2e`) and in a new
   `e2e-playback` CI job, which also type-checks and builds the web app in CI
   for the first time.
+- The collect journal records the settings behind each fingerprint. A digest
+  says two configurations differ but not in what, and `(old, new)` is the whole
+  content of a prediction — so `forge collect` writes a snapshot line whenever
+  it records replays under values not already on file. Replay lines are
+  unchanged, and a record of a kind a reader does not know is skipped rather
+  than fatal, so old journals, mixed journals and journals from a later version
+  all still parse. Fix-forward only: what changed across a boundary recorded
+  before snapshots existed is unrecoverable, and `forge diagnose` says exactly
+  that instead of reporting an empty diff as "nothing but the offset changed".
 
 ### Changed
 - `forge serve` reads `osu!.db` for per-beatmap local offsets, with a `--db`
