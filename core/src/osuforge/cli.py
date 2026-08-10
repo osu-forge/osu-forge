@@ -613,12 +613,10 @@ def _serve(args: argparse.Namespace) -> int:
     """Read the site and the replays, then hand both to the server and block."""
     import asyncio
 
-    import osu_forge_diffcalc as diffcalc
-
     from osuforge.live.watch import BeatmapIndex, analyse
-    from osuforge.replay.parse import ReplayParseError, parse_path
-    from osuforge.replay.simulate import simulate
+    from osuforge.replay.source import judge
     from osuforge.server import (
+        AnalysisCache,
         Broadcaster,
         CorpusState,
         ReplayPayload,
@@ -626,6 +624,7 @@ def _serve(args: argparse.Namespace) -> int:
         SiteMissingError,
         Watcher,
         load_site,
+        reduce_play,
         serve,
     )
     from osuforge.server.protocol import analysis_payload
@@ -659,6 +658,7 @@ def _serve(args: argparse.Namespace) -> int:
     payloads: dict[str, Any] = {}
     skipped: dict[str, int] = {}
     corpus = CorpusState()
+    cache = AnalysisCache(args.cache)
 
     # Best effort, never fatal: the journal is what knows when settings
     # changed. Without one the verdict pools everything it believes and the
@@ -675,6 +675,12 @@ def _serve(args: argparse.Namespace) -> int:
     def note(reason: str) -> None:
         skipped[reason] = skipped.get(reason, 0) + 1
 
+    def remember(path: Path, facts: dict[str, Any]) -> None:
+        """Into the corpus now, and into the cache for the next start."""
+        corpus.add_facts(path.name, facts, epoch=journal_epochs.get(path.name))
+        stat = path.stat()
+        cache.put(path.name, size=stat.st_size, mtime_ns=stat.st_mtime_ns, facts=facts)
+
     def prepare_replay(path: Path) -> ReplayPayload | None:
         """Build one payload, or `None` if it cannot be read yet.
 
@@ -683,49 +689,23 @@ def _serve(args: argparse.Namespace) -> int:
         loaded at startup were. Two code paths here would drift, and the
         difference would only show as one play looking unlike the rest.
         """
-        try:
-            replay = parse_path(path)
-        except ReplayParseError:
+        judged = judge(path, index)
+        if isinstance(judged, str):
             # Also the ordinary case for a file osu! is still writing, so the
             # caller decides whether to retry rather than this treating it as
             # corrupt.
             return None
-        beatmap_path = index.get(replay.beatmap_hash)
-        if beatmap_path is None:
-            return None
-        try:
-            plain = diffcalc.Beatmap.from_file(beatmap_path)
-        except diffcalc.BeatmapError:
-            return None
+        remember(path, reduce_play(judged))
         # The same analysis the static page showed. It returns a reason rather
         # than None when it cannot run, and a play that cannot be analysed is
         # still worth playing back — so the failure costs the numbers, not the
         # replay.
         play = analyse(path, index)
-        simulation = simulate(replay, plain)
-        if not isinstance(play, str):
-            # Recorded, not yet recomputed: the caller decides when to pay for
-            # the statistics, so a startup scan pays once rather than per play.
-            reported = replay.judgements
-            corpus.add(
-                path.name,
-                beatmap_hash=replay.beatmap_hash,
-                beatmap=f"{plain.artist} - {plain.title} [{plain.version}]",
-                played_at=play.played_at,
-                errors=play.errors,
-                miss_rate=reported.count_miss / reported.total if reported.total else 0.0,
-                accuracy=play.accuracy,
-                breaks=len(play.breaks),
-                agreement=play.agreement,
-                agreement_reason=play.agreement_reason,
-                fractional_windows=simulation.fractional_windows,
-                epoch=journal_epochs.get(path.name),
-            )
         return ReplayPayload.build(
             replay_name=path.name,
-            beatmap=plain.with_mods(int(replay.mods)),
-            simulation=simulation,
-            rate=replay.rate,
+            beatmap=judged.played,
+            simulation=judged.simulation,
+            rate=judged.replay.rate,
             analysis=None if isinstance(play, str) else analysis_payload(play),
         )
 
@@ -740,12 +720,58 @@ def _serve(args: argparse.Namespace) -> int:
             continue
         payloads[path.name] = payload
 
+    # The corpus is not capped the way the payloads are. A payload holds half
+    # a megabyte of frames; a corpus entry holds a few kilobytes of hit
+    # errors — so history past the playback cap is restored from the cache,
+    # and a bounded number of never-analysed plays are analysed into it each
+    # start. Run over run, the corpus grows to cover everything ever played,
+    # which is the only corpus "12 sessions of evidence" can honestly mean.
+    restored = 0
+    backfilled = 0
+    unanalysed = 0
+    for path in found[args.limit :]:
+        try:
+            stat = path.stat()
+        except OSError:
+            continue
+        cached = cache.lookup(path.name, size=stat.st_size, mtime_ns=stat.st_mtime_ns)
+        if cached is not None:
+            try:
+                corpus.add_facts(path.name, cached, epoch=journal_epochs.get(path.name))
+                restored += 1
+                continue
+            except KeyError, ValueError, TypeError:
+                # A malformed row costs one recomputation, never the corpus.
+                pass
+        if args.backfill and backfilled < args.backfill:
+            judged = judge(path, index)
+            if not isinstance(judged, str):
+                remember(path, reduce_play(judged))
+                backfilled += 1
+                continue
+        unanalysed += 1
+
     print(f"site:     {site.root}", file=sys.stderr)
     print(f"beatmaps: {len(index)} indexed", file=sys.stderr)
-    print(f"replays:  {len(payloads)} prepared", file=sys.stderr)
+    print(f"replays:  {len(payloads)} prepared for playback", file=sys.stderr)
     if skipped:
         detail = ", ".join(f"{count} {reason}" for reason, count in sorted(skipped.items()))
         print(f"skipped:  {detail}", file=sys.stderr)
+    if cache.available:
+        parts = [f"{restored} play(s) restored from the cache"]
+        if backfilled:
+            parts.append(f"{backfilled} analysed into it")
+        if unanalysed:
+            parts.append(f"{unanalysed} older play(s) still to go")
+        print(f"history:  {', '.join(parts)}", file=sys.stderr)
+    else:
+        # Said once, plainly. A cache that cannot open costs history, not the
+        # server — but a corpus quietly smaller than the player's history is
+        # the kind of silence this tool exists to avoid.
+        print(
+            f"history:  cache unavailable at {cache.path}; the corpus covers this run only",
+            file=sys.stderr,
+        )
     if not payloads:
         print("error: nothing to serve", file=sys.stderr)
         return 2
@@ -1111,6 +1137,25 @@ def _build_parser() -> argparse.ArgumentParser:
         default=None,
         help=(
             f"the settings history the corpus panel splits on (default: {default_journal_path()})"
+        ),
+    )
+    serve_cmd.add_argument(
+        "--cache",
+        type=Path,
+        default=None,
+        help=(
+            "where analysed plays persist between runs; derived data, safe to "
+            "delete (default: beside the journal)"
+        ),
+    )
+    serve_cmd.add_argument(
+        "--backfill",
+        type=int,
+        default=15,
+        metavar="N",
+        help=(
+            "older plays analysed into the cache per start, so history "
+            "accumulates run over run (0 disables; default: 15)"
         ),
     )
     serve_cmd.add_argument(

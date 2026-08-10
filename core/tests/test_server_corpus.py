@@ -9,6 +9,7 @@ whether the answer says plainly that nothing here authorises a recommendation.
 from __future__ import annotations
 
 import json
+import typing
 from datetime import UTC, datetime, timedelta
 
 import numpy as np
@@ -214,6 +215,65 @@ class TestEpochs:
         feed(state, sessions=4, epoch="aaaa000000000000", mean=8.0)
         feed(state, sessions=4, first_session=4, epoch="bbbb111111111111", mean=1.0, seed=9)
         json.dumps(state.recompute(), allow_nan=False)
+
+
+class TestFacts:
+    """The JSON-safe reduction — the shape the analysis cache persists."""
+
+    FACTS: typing.ClassVar[dict[str, object]] = {
+        "beatmap_hash": "map-a",
+        "beatmap": "Artist - Title [map-a]",
+        "played_at": "2026-08-01T19:00:00+00:00",
+        "errors": [1.5, -2.25, 0.5],
+        "miss_rate": 0.02,
+        "accuracy": 0.97,
+        "breaks": 1,
+        "agreement": "exact",
+        "agreement_reason": "all judgements reproduce",
+        "fractional_windows": False,
+    }
+
+    def test_add_facts_is_add_with_the_types_restored(self) -> None:
+        direct = CorpusState()
+        direct.add(
+            "a.osr",
+            beatmap_hash="map-a",
+            beatmap="Artist - Title [map-a]",
+            played_at=datetime(2026, 8, 1, 19, 0, tzinfo=UTC),
+            errors=[1.5, -2.25, 0.5],
+            miss_rate=0.02,
+            accuracy=0.97,
+            breaks=1,
+            agreement=Agreement.EXACT,
+            agreement_reason="all judgements reproduce",
+            fractional_windows=False,
+        )
+        from_facts = CorpusState()
+        from_facts.add_facts("a.osr", dict(self.FACTS))
+        assert direct.recompute() == from_facts.recompute()
+
+    def test_a_malformed_dictionary_raises_rather_than_poisoning(self) -> None:
+        # The caller treats this as a cache miss and re-analyses. Silently
+        # coercing a wrong shape would put invented numbers in the corpus.
+        state = CorpusState()
+        broken = dict(self.FACTS)
+        del broken["errors"]
+        try:
+            state.add_facts("a.osr", broken)
+        except KeyError:
+            pass
+        else:
+            raise AssertionError("a missing field must raise")
+        assert len(state) == 0
+
+    def test_an_unknown_agreement_raises(self) -> None:
+        state = CorpusState()
+        try:
+            state.add_facts("a.osr", {**self.FACTS, "agreement": "probably"})
+        except ValueError:
+            pass
+        else:
+            raise AssertionError("an unknown agreement must raise")
 
 
 class TestCaching:
