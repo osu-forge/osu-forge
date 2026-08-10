@@ -17,7 +17,7 @@ jobs:
     name: Architecture invariants
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       # These are the guarantees README.md makes to users. They are enforced
       # here rather than by convention, because a convention that is only
@@ -95,7 +95,7 @@ jobs:
       matrix:
         python: ["3.14"]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: actions/setup-python@v7
         with:
           python-version: ${{ matrix.python }}
@@ -148,7 +148,7 @@ jobs:
       # and SwiftShader is only deterministic within one of them.
       PLAYWRIGHT_VERSION: 1.62.1
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: actions/setup-python@v7
         with:
           python-version: "3.14"
@@ -206,7 +206,7 @@ jobs:
     name: Rust
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       # The workspace contains a PyO3 extension module, and building a cdylib on
       # Windows links against a specific interpreter's import library. Pinning
       # the interpreter here means the Rust job does not depend on whichever
@@ -232,7 +232,7 @@ jobs:
     # means either we have a bug or upstream reworked pp.
     if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - name: Compare against official difficulty attributes
