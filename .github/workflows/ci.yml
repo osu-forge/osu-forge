@@ -96,7 +96,7 @@ jobs:
         python: ["3.14"]
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: ${{ matrix.python }}
       - uses: dtolnay/rust-toolchain@stable
@@ -149,7 +149,7 @@ jobs:
       PLAYWRIGHT_VERSION: 1.62.1
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.14"
       - uses: dtolnay/rust-toolchain@stable
@@ -211,7 +211,7 @@ jobs:
       # Windows links against a specific interpreter's import library. Pinning
       # the interpreter here means the Rust job does not depend on whichever
       # Python the runner image happens to ship.
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.14"
       - uses: dtolnay/rust-toolchain@stable
