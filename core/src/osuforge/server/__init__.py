@@ -13,7 +13,8 @@ stops.
 
 from osuforge.server.app import build_app
 from osuforge.server.assets import Site, SiteMissingError, default_site_root, load_site
-from osuforge.server.corpus import CorpusState
+from osuforge.server.cache import AnalysisCache, default_cache_path
+from osuforge.server.corpus import CorpusState, reduce_play
 from osuforge.server.live import Broadcaster, Watcher
 from osuforge.server.protocol import SCHEMA_VERSION, ReplayPayload
 from osuforge.server.run import INTERFACE, ServerError, prepare, serve
@@ -24,6 +25,7 @@ __all__ = [
     "INTERFACE",
     "SCHEMA_VERSION",
     "Access",
+    "AnalysisCache",
     "Broadcaster",
     "CorpusState",
     "ReplayPayload",
@@ -33,9 +35,11 @@ __all__ = [
     "SiteMissingError",
     "Watcher",
     "build_app",
+    "default_cache_path",
     "default_site_root",
     "load_site",
     "prepare",
+    "reduce_play",
     "runtime_file",
     "serve",
 ]

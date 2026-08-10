@@ -152,6 +152,16 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   vanishing from the page they just appeared on.
 - `forge diagnose --all-epochs` prints the same comparison, and the default
   run points at it when the settings filter left an era out.
+- `osuforge.server.cache` — the analysis cache. What each play reduces to for
+  the corpus persists in a SQLite file beside the journal, keyed by the
+  replay's name, size, mtime and the tool version that produced it — numbers
+  cached by an older simulator are measurements under different rules and are
+  dropped rather than mixed in. At startup `forge serve` restores every
+  cached play into the corpus, analyses a bounded number of never-seen older
+  plays into it (`--backfill`, default 15), and records each new play as it
+  arrives, so the corpus outgrows the playback cap and covers everything ever
+  played, run over run. A damaged cache costs recomputation, never the
+  server; deleting the file loses minutes, not facts.
 
 ### Changed
 - Integration tests are deselected by default and require an environment

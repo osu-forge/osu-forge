@@ -55,10 +55,39 @@ from typing import Any
 from osuforge.analysis.clustering import assign_sessions
 from osuforge.analysis.corpus import Entry, beatmap_reading, by_beatmap, diagnose
 from osuforge.analysis.progress import fill_epochs, progress
+from osuforge.replay.source import Judged
 from osuforge.replay.validate import Agreement, CorpusHealth
 from osuforge.server.protocol import corpus_payload
 
-__all__ = ["CorpusState"]
+__all__ = ["CorpusState", "reduce_play"]
+
+
+def reduce_play(judged: Judged) -> dict[str, Any]:
+    """One judged play, reduced to the JSON-safe facts the corpus needs.
+
+    This is the shape the analysis cache persists, which is why it is strings
+    and numbers rather than the richer objects: what goes into the corpus at
+    startup from the cache and what goes in live from the watcher must be the
+    same reduction, or the corpus would quietly depend on how each play
+    happened to arrive.
+
+    `breaks` is the game's own miss count, matching what
+    :func:`osuforge.analysis.gather.gather` records for the same replay.
+    """
+    reported = judged.replay.judgements
+    beatmap = judged.beatmap
+    return {
+        "beatmap_hash": judged.replay.beatmap_hash,
+        "beatmap": f"{beatmap.artist} - {beatmap.title} [{beatmap.version}]",
+        "played_at": judged.replay.timestamp.isoformat(),
+        "errors": judged.simulation.timing_errors(),
+        "miss_rate": reported.count_miss / reported.total if reported.total else 0.0,
+        "accuracy": reported.accuracy,
+        "breaks": reported.count_miss,
+        "agreement": str(judged.check.agreement),
+        "agreement_reason": judged.check.reason,
+        "fractional_windows": judged.simulation.fractional_windows,
+    }
 
 
 @dataclass(frozen=True, slots=True)
@@ -132,6 +161,29 @@ class CorpusState:
             agreement=agreement,
             agreement_reason=agreement_reason,
             fractional_windows=fractional_windows,
+            epoch=epoch,
+        )
+
+    def add_facts(self, name: str, facts: dict[str, Any], *, epoch: str | None = None) -> None:
+        """Record a play from its JSON-safe reduction — the cache's shape.
+
+        The inverse of :func:`reduce_play`. Raises `KeyError`, `ValueError` or
+        `TypeError` on a dictionary that does not have that shape; a caller
+        feeding from the cache treats that as a miss and re-analyses, because
+        a malformed row must cost one recomputation rather than the corpus.
+        """
+        self.add(
+            name,
+            beatmap_hash=str(facts["beatmap_hash"]),
+            beatmap=str(facts["beatmap"]),
+            played_at=datetime.fromisoformat(str(facts["played_at"])),
+            errors=[float(error) for error in facts["errors"]],
+            miss_rate=float(facts["miss_rate"]),
+            accuracy=float(facts["accuracy"]),
+            breaks=int(facts["breaks"]),
+            agreement=Agreement(str(facts["agreement"])),
+            agreement_reason=str(facts["agreement_reason"]),
+            fractional_windows=bool(facts["fractional_windows"]),
             epoch=epoch,
         )
 
