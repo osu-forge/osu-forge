@@ -8,6 +8,8 @@ import { ErrorTimeline } from "@/components/ErrorTimeline";
 import { DEFAULT_LOCALE, detectLocale, translator, type Locale } from "@/i18n";
 import {
   client,
+  MOD_HIDDEN,
+  modNames,
   ProtocolError,
   sampleAt,
   type Corpus,
@@ -89,6 +91,10 @@ export function App({ token }: { token: string }) {
   useEffect(() => {
     loopRef.current = loop;
   }, [loop]);
+  /** Analysis override for Hidden: the faithful render hides what the player
+   *  could not see, and this reveals it without pretending the play was made
+   *  that way — the HD badge stays up either way. */
+  const [revealHidden, setRevealHidden] = useState(false);
 
   useEffect(() => {
     setLocale(detectLocale(navigator.languages ?? [navigator.language]));
@@ -165,6 +171,7 @@ export function App({ token }: { token: string }) {
     let backdrop: string | null = null;
     setLoaded(null);
     setLoop(null);
+    setRevealHidden(false);
     api
       .load(selected)
       .then((result) => {
@@ -208,6 +215,11 @@ export function App({ token }: { token: string }) {
     if (!loaded) return;
     let frame = 0;
     const end = loaded.samples.t[loaded.samples.t.length - 1] ?? 0;
+    // The wire clock is map time, but the play happened in real time: under
+    // Double Time 1.5 map milliseconds passed per wall millisecond. Advancing
+    // by the rate makes 1× mean "as fast as it was played" — without it a DT
+    // replay reviews in slow motion while claiming full speed.
+    const rate = loaded.header.rate || 1;
 
     const step = (now: number) => {
       if (playing) {
@@ -216,7 +228,7 @@ export function App({ token }: { token: string }) {
         // increment: a dropped frame must advance the clock by what it cost
         // rather than by one tick, or playback drifts away from the timeline
         // it is drawn against.
-        if (previous !== null) clockRef.current += (now - previous) * speed;
+        if (previous !== null) clockRef.current += (now - previous) * speed * rate;
         lastFrame.current = now;
         const section = loopRef.current;
         if (section && clockRef.current >= section[1]) {
@@ -251,16 +263,19 @@ export function App({ token }: { token: string }) {
         setPlaying(false);
         seek(samples.t[next]!);
       };
+      // Seeks are in experienced seconds, so "2 s" means the same thing on a
+      // Double Time replay as on a no-mod one.
+      const hop = (event.shiftKey ? 10_000 : 2_000) * (loaded.header.rate || 1);
 
       switch (event.code) {
         case "Space":
           toggle();
           break;
         case "ArrowLeft":
-          seek(clockRef.current - (event.shiftKey ? 10_000 : 2_000));
+          seek(clockRef.current - hop);
           break;
         case "ArrowRight":
-          seek(clockRef.current + (event.shiftKey ? 10_000 : 2_000));
+          seek(clockRef.current + hop);
           break;
         case "Comma":
           stepSample(-1);
@@ -305,6 +320,9 @@ export function App({ token }: { token: string }) {
   }
 
   const header = loaded?.header;
+  const rate = header?.rate || 1;
+  const badges = header ? modNames(header.mods) : [];
+  const playedHidden = header ? (header.mods & MOD_HIDDEN) !== 0 : false;
   const needle = query.trim().toLowerCase();
   const shown = (entries ?? []).filter((entry) => {
     if (!needle) return true;
@@ -366,6 +384,11 @@ export function App({ token }: { token: string }) {
               <span className="truncate">
                 [{entry.header.beatmap.version}]
               </span>
+              {modNames(entry.header.mods).length > 0 && (
+                <span className="shrink-0 font-mono">
+                  {modNames(entry.header.mods).join(" ")}
+                </span>
+              )}
               <span className="shrink-0 tabular-nums">
                 {(accuracyOf(entry.header.counts) * 100).toFixed(2)}%
               </span>
@@ -395,8 +418,15 @@ export function App({ token }: { token: string }) {
             <span className="truncate text-body-sm text-body">{t("corpus.axes")}</span>
           ) : (
             header && (
-              <span className="truncate text-body-sm text-body">
-                {header.beatmap.artist} — {header.beatmap.title} [{header.beatmap.version}]
+              <span className="flex min-w-0 items-baseline gap-sm">
+                <span className="truncate text-body-sm text-body">
+                  {header.beatmap.artist} — {header.beatmap.title} [{header.beatmap.version}]
+                </span>
+                {badges.length > 0 && (
+                  <span className="shrink-0 font-mono text-body-sm text-[color:var(--color-accent-breeze)]">
+                    {badges.join(" ")}
+                  </span>
+                )}
               </span>
             )
           )}
@@ -426,6 +456,7 @@ export function App({ token }: { token: string }) {
                     samples={loaded.samples}
                     paths={loaded.paths}
                     clock={clock}
+                    hidden={playedHidden && !revealHidden}
                   />
                 )}
                 {loaded && <LiveHud header={loaded.header} clock={clock} t={t} />}
@@ -487,8 +518,24 @@ export function App({ token }: { token: string }) {
                   </div>
 
                   <span className="font-mono text-body-sm tabular-nums text-body">
-                    {stamp(clock - bounds.current[0])} / {stamp(bounds.current[1] - bounds.current[0])}
+                    {stamp((clock - bounds.current[0]) / rate)} /{" "}
+                    {stamp((bounds.current[1] - bounds.current[0]) / rate)}
                   </span>
+
+                  {playedHidden && (
+                    <button
+                      type="button"
+                      onClick={() => setRevealHidden((on) => !on)}
+                      aria-pressed={revealHidden}
+                      className={`cursor-pointer rounded-pill border px-sm py-xs font-mono text-body-sm ${
+                        revealHidden
+                          ? "border-[color:var(--color-accent-breeze)] text-[color:var(--color-accent-breeze)]"
+                          : "border-hairline text-mute hover:text-ink-hover"
+                      }`}
+                    >
+                      {t("player.revealHidden")}
+                    </button>
+                  )}
 
                   {loop && (
                     <button
@@ -517,9 +564,9 @@ export function App({ token }: { token: string }) {
                             onClick={() => {
                               if (!target) return;
                               setPlaying(false);
-                              // Land shortly before the break, so the approach
-                              // that caused it is what plays, not the aftermath.
-                              seek(target.time - 1200);
+                              // Land shortly before the break — in experienced
+                              // time, so the run-up length does not depend on DT.
+                              seek(target.time - 1200 * rate);
                             }}
                             className="cursor-pointer rounded-pill border border-hairline px-sm py-xs text-body-sm text-mute hover:text-ink-hover disabled:cursor-default disabled:opacity-40"
                           >

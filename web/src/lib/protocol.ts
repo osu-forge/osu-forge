@@ -116,6 +116,10 @@ export interface ReplayHeader {
   schema_version: number;
   replay: string;
   rate: number;
+  /** The raw osu! mod bitmask the play was made with. The `beatmap` block
+   *  already carries the modded values; this is what lets the page name them
+   *  and render what the player saw. */
+  mods: number;
   sample_bytes: number;
   sample_count: number;
   path_point_bytes: number;
@@ -264,6 +268,40 @@ export interface Corpus {
 }
 
 export class ProtocolError extends Error {}
+
+/** Bits of the osu! mod mask, in display order. */
+export const MOD_HIDDEN = 8;
+
+const MOD_NAMES: [number, string][] = [
+  [2, "EZ"],
+  [1, "NF"],
+  [256, "HT"],
+  [MOD_HIDDEN, "HD"],
+  [16, "HR"],
+  [64, "DT"],
+  [512, "NC"],
+  [1024, "FL"],
+  [32, "SD"],
+  [16384, "PF"],
+  [4096, "SO"],
+];
+
+/** The mods as the game abbreviates them.
+ *
+ * Nightcore carries the Double Time bit and Perfect carries Sudden Death's,
+ * so the contained mod is dropped rather than shown twice — a Nightcore play
+ * reads "NC", not "DT NC".
+ */
+export function modNames(mods: number): string[] {
+  const names: string[] = [];
+  for (const [bit, name] of MOD_NAMES) {
+    if (!(mods & bit)) continue;
+    if (name === "DT" && mods & 512) continue;
+    if (name === "SD" && mods & 16384) continue;
+    names.push(name);
+  }
+  return names;
+}
 
 export function decodeSamples(header: ReplayHeader, buffer: ArrayBuffer): Samples {
   const stride = header.sample_bytes;

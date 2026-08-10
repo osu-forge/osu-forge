@@ -428,6 +428,7 @@ class ReplayPayload:
         rate: float,
         analysis: dict[str, Any] | None = None,
         background: Path | None = None,
+        mods: int = 0,
     ) -> ReplayPayload:
         counts = simulation.counts()
         paths, _ = encode_paths(beatmap)
@@ -435,6 +436,11 @@ class ReplayPayload:
             "schema_version": SCHEMA_VERSION,
             "replay": replay_name,
             "rate": rate,
+            # The raw bitmask, so the page can say what the player saw and
+            # render it. The beatmap block below already carries the modded
+            # values; without this the page could apply them without being
+            # able to name them.
+            "mods": mods,
             "sample_bytes": SAMPLE_BYTES,
             "sample_count": len(simulation.frames.frames),
             "path_point_bytes": PATH_POINT_BYTES,

@@ -178,6 +178,18 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   replays that never used them; the timeline is a scrubber that keeps
   seeking while dragged; `,` and `.` step one recorded sample; and playing
   from the end rewinds first instead of doing nothing.
+- Rendering fidelity, audited and fixed. The wire already carried the modded
+  beatmap — Hard Rock's reflected positions with stacking recomputed after
+  the flip, the smaller circles, the shorter preempt — but four things were
+  wrong and now are not: playback advances the map-time clock by the replay's
+  rate, so 1× on a Double Time play means the speed it was played at rather
+  than slow motion (the readout, seeks and break landings are in experienced
+  seconds); the header carries the mod bitmask and the page names it, in the
+  list and beside the title; Hidden renders as the player saw it — no
+  approach circles, objects fading in over 40% of the preempt and out over
+  the next 30%, slider bodies thinning across their own duration — with a
+  `reveal HD` toggle for the analysis view; and the approach ring starts at
+  four times the radius as the game draws it, not 3.4.
 - The player shows the play as it stands at the playhead. Exact running
   accuracy, unstable rate and judgement counts — every judgement at or
   before the clock, nothing projected, and deliberately no running combo
