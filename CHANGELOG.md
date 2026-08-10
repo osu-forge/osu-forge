@@ -220,6 +220,14 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   background sits dimmed under the playfield, served read-only from a path
   resolved at startup (`/api/replays/{name}/background`) — the one response
   read from disk at request time, for a file the request cannot choose.
+- The player page gains a keyboard panel, computed exactly from the recorded
+  frames: every wait between consecutive taps plotted across the recording in
+  real milliseconds with its 1/4-snap BPM equivalent, per-key press counts and
+  median holds, the fastest eight-tap stretch, and how often the play changed
+  hands. Nothing is estimated — each number is a count or the difference of two
+  recorded timestamps — and the panel states the one limit that matters: the
+  recording samples at the render framerate, so an edge lands up to one sample
+  gap late and a wait carries one at each end.
 
 ### Changed
 - `forge serve` reads `osu!.db` for per-beatmap local offsets, with a `--db`
