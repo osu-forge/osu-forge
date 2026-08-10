@@ -13,7 +13,6 @@ from __future__ import annotations
 
 import ctypes
 import sys
-from ctypes import wintypes
 from dataclasses import dataclass
 
 from osuforge.probes.base import ProbeResult
@@ -28,61 +27,68 @@ _DISPLAY_DEVICE_ATTACHED_TO_DESKTOP = 0x00000001
 _DISPLAY_DEVICE_PRIMARY_DEVICE = 0x00000004
 
 
-# Struct names mirror the Win32 ones exactly so each can be checked against the
-# MSDN page field by field. A CapWords rename would make that harder, and these
-# layouts are the one place a silent mistake produces plausible wrong numbers.
-class _DISPLAY_DEVICEW(ctypes.Structure):  # noqa: N801
-    _fields_ = (
-        ("cb", wintypes.DWORD),
-        ("DeviceName", wintypes.WCHAR * 32),
-        ("DeviceString", wintypes.WCHAR * 128),
-        ("StateFlags", wintypes.DWORD),
-        ("DeviceID", wintypes.WCHAR * 128),
-        ("DeviceKey", wintypes.WCHAR * 128),
-    )
+# `ctypes.wintypes` does not exist off Windows and these layouts need it while
+# the class body runs, so leaving them at module scope makes the whole command
+# line unimportable there. Nothing below is reached before `probe_displays` has
+# already refused on a non-Windows platform.
+if sys.platform == "win32":
+    from ctypes import wintypes
 
+    # Struct names mirror the Win32 ones exactly so each can be checked against
+    # the MSDN page field by field. A CapWords rename would make that harder,
+    # and these layouts are the one place a silent mistake produces plausible
+    # wrong numbers.
+    class _DISPLAY_DEVICEW(ctypes.Structure):  # noqa: N801
+        _fields_ = (
+            ("cb", wintypes.DWORD),
+            ("DeviceName", wintypes.WCHAR * 32),
+            ("DeviceString", wintypes.WCHAR * 128),
+            ("StateFlags", wintypes.DWORD),
+            ("DeviceID", wintypes.WCHAR * 128),
+            ("DeviceKey", wintypes.WCHAR * 128),
+        )
 
-class _DEVMODEW(ctypes.Structure):
-    """Field order matters and is not obvious.
+    class _DEVMODEW(ctypes.Structure):
+        """Field order matters and is not obvious.
 
-    The position/orientation block is a union with the printer-oriented fields;
-    laying it out as anything other than this exact sequence shifts
-    ``dmDisplayFrequency`` and yields a plausible-looking wrong refresh rate,
-    which is precisely the failure mode the probes are built to avoid.
-    """
+        The position/orientation block is a union with the printer-oriented
+        fields; laying it out as anything other than this exact sequence shifts
+        ``dmDisplayFrequency`` and yields a plausible-looking wrong refresh
+        rate, which is precisely the failure mode the probes are built to avoid.
+        """
 
-    _fields_ = (
-        ("dmDeviceName", wintypes.WCHAR * 32),
-        ("dmSpecVersion", wintypes.WORD),
-        ("dmDriverVersion", wintypes.WORD),
-        ("dmSize", wintypes.WORD),
-        ("dmDriverExtra", wintypes.WORD),
-        ("dmFields", wintypes.DWORD),
-        ("dmPositionX", ctypes.c_long),
-        ("dmPositionY", ctypes.c_long),
-        ("dmDisplayOrientation", wintypes.DWORD),
-        ("dmDisplayFixedOutput", wintypes.DWORD),
-        ("dmColor", ctypes.c_short),
-        ("dmDuplex", ctypes.c_short),
-        ("dmYResolution", ctypes.c_short),
-        ("dmTTOption", ctypes.c_short),
-        ("dmCollate", ctypes.c_short),
-        ("dmFormName", wintypes.WCHAR * 32),
-        ("dmLogPixels", wintypes.WORD),
-        ("dmBitsPerPel", wintypes.DWORD),
-        ("dmPelsWidth", wintypes.DWORD),
-        ("dmPelsHeight", wintypes.DWORD),
-        ("dmDisplayFlags", wintypes.DWORD),
-        ("dmDisplayFrequency", wintypes.DWORD),
-        ("dmICMMethod", wintypes.DWORD),
-        ("dmICMIntent", wintypes.DWORD),
-        ("dmMediaType", wintypes.DWORD),
-        ("dmDitherType", wintypes.DWORD),
-        ("dmReserved1", wintypes.DWORD),
-        ("dmReserved2", wintypes.DWORD),
-        ("dmPanningWidth", wintypes.DWORD),
-        ("dmPanningHeight", wintypes.DWORD),
-    )
+        _fields_ = (
+            ("dmDeviceName", wintypes.WCHAR * 32),
+            ("dmSpecVersion", wintypes.WORD),
+            ("dmDriverVersion", wintypes.WORD),
+            ("dmSize", wintypes.WORD),
+            ("dmDriverExtra", wintypes.WORD),
+            ("dmFields", wintypes.DWORD),
+            ("dmPositionX", ctypes.c_long),
+            ("dmPositionY", ctypes.c_long),
+            ("dmDisplayOrientation", wintypes.DWORD),
+            ("dmDisplayFixedOutput", wintypes.DWORD),
+            ("dmColor", ctypes.c_short),
+            ("dmDuplex", ctypes.c_short),
+            ("dmYResolution", ctypes.c_short),
+            ("dmTTOption", ctypes.c_short),
+            ("dmCollate", ctypes.c_short),
+            ("dmFormName", wintypes.WCHAR * 32),
+            ("dmLogPixels", wintypes.WORD),
+            ("dmBitsPerPel", wintypes.DWORD),
+            ("dmPelsWidth", wintypes.DWORD),
+            ("dmPelsHeight", wintypes.DWORD),
+            ("dmDisplayFlags", wintypes.DWORD),
+            ("dmDisplayFrequency", wintypes.DWORD),
+            ("dmICMMethod", wintypes.DWORD),
+            ("dmICMIntent", wintypes.DWORD),
+            ("dmMediaType", wintypes.DWORD),
+            ("dmDitherType", wintypes.DWORD),
+            ("dmReserved1", wintypes.DWORD),
+            ("dmReserved2", wintypes.DWORD),
+            ("dmPanningWidth", wintypes.DWORD),
+            ("dmPanningHeight", wintypes.DWORD),
+        )
 
 
 @dataclass(frozen=True, slots=True)

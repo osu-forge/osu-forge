@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import ctypes
 import sys
-from ctypes import wintypes
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -35,6 +34,28 @@ TIMER_PROBE_ID = "system.timer_resolution"
 POWER_PROBE_ID = "system.power_scheme"
 GAMEBAR_PROBE_ID = "system.game_bar"
 FSO_PROBE_ID = "system.fullscreen_optimizations"
+
+
+# `ctypes.wintypes` does not exist off Windows and the struct below needs it
+# while the class body runs, so leaving them at module scope makes the whole
+# command line unimportable there. One gate per module holds everything
+# Windows-only, so _GUID sits here rather than beside the power scheme that
+# builds it; every probe refuses on a non-Windows platform before reaching any
+# of this.
+if sys.platform == "win32":
+    from ctypes import wintypes
+
+    class _GUID(ctypes.Structure):
+        _fields_ = (
+            ("Data1", wintypes.DWORD),
+            ("Data2", wintypes.WORD),
+            ("Data3", wintypes.WORD),
+            ("Data4", ctypes.c_ubyte * 8),
+        )
+
+        def __str__(self) -> str:
+            tail = "".join(f"{b:02x}" for b in self.Data4)
+            return f"{self.Data1:08x}-{self.Data2:04x}-{self.Data3:04x}-{tail[:4]}-{tail[4:]}"
 
 
 # ---------------------------------------------------------------- timer
@@ -105,19 +126,6 @@ _KNOWN_SCHEMES = {
 _THROTTLING_SCHEMES = frozenset(
     {"381b4222-f694-41f0-9685-ff5bb260df2e", "a1841308-3541-4fab-bc81-f71556f20b4a"}
 )
-
-
-class _GUID(ctypes.Structure):
-    _fields_ = (
-        ("Data1", wintypes.DWORD),
-        ("Data2", wintypes.WORD),
-        ("Data3", wintypes.WORD),
-        ("Data4", ctypes.c_ubyte * 8),
-    )
-
-    def __str__(self) -> str:
-        tail = "".join(f"{b:02x}" for b in self.Data4)
-        return f"{self.Data1:08x}-{self.Data2:04x}-{self.Data3:04x}-{tail[:4]}-{tail[4:]}"
 
 
 @dataclass(frozen=True, slots=True)
