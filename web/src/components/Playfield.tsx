@@ -88,15 +88,27 @@ function ballAt(
   return { progress: reversed ? 1 - within : within, reversed, span };
 }
 
-/** Point on a slider's exported path at `progress`, 0 to 1. */
+/** Point on a slider's exported path at `progress`, 0 to 1.
+ *
+ * Interpolated between the two bracketing samples rather than snapped to the
+ * nearer one: the path is resampled at five-pixel spacing, and a ball that
+ * jumps five pixels per step reads as stuttering on a slow slider — motion
+ * the path genuinely describes, lost to rounding.
+ */
 function pathPoint(
   paths: Float32Array,
   offset: number,
   count: number,
   progress: number,
 ): [number, number] {
-  const at = Math.min(count - 1, Math.max(0, Math.round(progress * (count - 1))));
-  return [paths[(offset + at) * 2]!, paths[(offset + at) * 2 + 1]!];
+  const exact = Math.min(count - 1, Math.max(0, progress * (count - 1)));
+  const base = Math.floor(exact);
+  const next = Math.min(count - 1, base + 1);
+  const frac = exact - base;
+  return [
+    paths[(offset + base) * 2]! * (1 - frac) + paths[(offset + next) * 2]! * frac,
+    paths[(offset + base) * 2 + 1]! * (1 - frac) + paths[(offset + next) * 2 + 1]! * frac,
+  ];
 }
 
 type Colour = readonly [number, number, number, number];
@@ -246,8 +258,14 @@ export function Playfield({ header, samples, paths, clock, trail = 48, hidden = 
 
       if (object.kind === "slider" && object.p && object.p[1] > 0) {
         const [offset, count] = object.p;
-        if (visible > 0.02) {
-          ribbons.push({ points: paths, offset, count, colour: dim(palette.body, visible) });
+        // Snake in: the body grows out of the head across the first half of
+        // the preempt, as the game draws it, and is whole before the object
+        // is due. A body that appears fully formed reads as a static picture
+        // rather than a thing about to be played.
+        const snake = Math.min(1, Math.max(0, (clock - (object.t - preempt)) / (preempt * 0.5)));
+        const shown = Math.max(2, Math.ceil(count * snake));
+        if (visible > 0.02 && snake > 0) {
+          ribbons.push({ points: paths, offset, count: shown, colour: dim(palette.body, visible) });
         }
 
         const slides = object.slides ?? 1;
@@ -290,10 +308,14 @@ export function Playfield({ header, samples, paths, clock, trail = 48, hidden = 
         // nothing.
         const judgedParts = header.judgements[i]?.parts ?? null;
         if (object.parts) {
+          const spanMs = Math.max(1, (object.end - object.t) / (object.slides ?? 1));
           for (let p = 0; p < object.parts.length; p++) {
             const [partTime, partX, partY, partKind] = object.parts[p]!;
             if (clock < partTime) {
-              if (partKind === 0 && visible > 0.02) {
+              // A tick appears once the snaking body has reached it, not
+              // before there is a body to sit on.
+              const arc = Math.min(1, Math.max(0, (partTime - object.t) / spanMs));
+              if (partKind === 0 && visible > 0.02 && snake >= arc) {
                 discs.push({
                   x: partX,
                   y: partY,
