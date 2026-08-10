@@ -126,7 +126,7 @@ export function ErrorTimeline({ header, clock, onSeek, t }: ErrorTimelineProps) 
     ctx.stroke();
   }, [header, clock]);
 
-  function seek(event: React.MouseEvent<HTMLCanvasElement>) {
+  function seek(event: React.PointerEvent<HTMLCanvasElement>) {
     if (!onSeek) return;
     const element = event.currentTarget;
     const box = element.getBoundingClientRect();
@@ -134,15 +134,25 @@ export function ErrorTimeline({ header, clock, onSeek, t }: ErrorTimelineProps) 
     if (objects.length === 0) return;
     const first = objects[0]!.t;
     const last = objects[objects.length - 1]!.end;
-    onSeek(first + ((event.clientX - box.left) / box.width) * (last - first));
+    const along = Math.min(1, Math.max(0, (event.clientX - box.left) / box.width));
+    onSeek(first + along * (last - first));
   }
 
   return (
     <figure className="m-0">
+      {/* A scrubber, not just a target: press seeks, and dragging keeps
+          seeking while the button is down, so a break can be rocked back and
+          forth over instead of clicked at repeatedly. */}
       <canvas
         ref={canvas}
-        onClick={seek}
-        className="block w-full cursor-crosshair"
+        onPointerDown={(event) => {
+          event.currentTarget.setPointerCapture(event.pointerId);
+          seek(event);
+        }}
+        onPointerMove={(event) => {
+          if (event.buttons & 1) seek(event);
+        }}
+        className="block w-full cursor-crosshair touch-none"
         style={{ height: HEIGHT }}
       />
       <figcaption className="eyebrow mt-sm flex gap-lg px-lg">

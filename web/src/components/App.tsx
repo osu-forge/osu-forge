@@ -1,12 +1,14 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AnalysisPanel } from "@/components/Analysis";
 import { CorpusPanel } from "@/components/Corpus";
+import { KeyOverlay } from "@/components/KeyOverlay";
 import { Playfield } from "@/components/Playfield";
 import { ErrorTimeline } from "@/components/ErrorTimeline";
 import { DEFAULT_LOCALE, detectLocale, translator, type Locale } from "@/i18n";
 import {
   client,
   ProtocolError,
+  sampleAt,
   type Corpus,
   type Entry,
   type ReplayHeader,
@@ -41,6 +43,12 @@ function playedDay(entry: Entry): string | null {
   return at ? at.slice(5, 10) : null;
 }
 
+/** `m:ss` from milliseconds of recording, clamped so a pre-start clock reads 0:00. */
+function stamp(ms: number): string {
+  const seconds = Math.max(0, Math.floor(ms / 1000));
+  return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}`;
+}
+
 export function App({ token }: { token: string }) {
   const api = useMemo(() => client(token), [token]);
   const [locale, setLocale] = useState<Locale>(DEFAULT_LOCALE);
@@ -66,9 +74,12 @@ export function App({ token }: { token: string }) {
   const [query, setQuery] = useState("");
 
   const [playing, setPlaying] = useState(false);
+  const [speed, setSpeed] = useState(1);
   const [clock, setClock] = useState(0);
   const clockRef = useRef(0);
   const lastFrame = useRef<number | null>(null);
+  /** Recording bounds of the loaded replay, for clamping every seek. */
+  const bounds = useRef<[number, number]>([0, 0]);
 
   useEffect(() => {
     setLocale(detectLocale(navigator.languages ?? [navigator.language]));
@@ -139,20 +150,6 @@ export function App({ token }: { token: string }) {
     );
   }, [api]);
 
-  // Space is play/pause anywhere a control does not already own the key —
-  // the one shortcut every player's hands expect from a replay page.
-  useEffect(() => {
-    const onKey = (event: KeyboardEvent) => {
-      if (event.code !== "Space" || view !== "replay" || !loaded) return;
-      const target = event.target as HTMLElement | null;
-      if (target && ["INPUT", "TEXTAREA", "SELECT", "BUTTON"].includes(target.tagName)) return;
-      event.preventDefault();
-      setPlaying((on) => !on);
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [view, loaded]);
-
   useEffect(() => {
     if (!selected) return;
     let cancelled = false;
@@ -163,6 +160,7 @@ export function App({ token }: { token: string }) {
         if (cancelled) return;
         setLoaded(result);
         const start = result.samples.t[0] ?? 0;
+        bounds.current = [start, result.samples.t[result.samples.t.length - 1] ?? start];
         clockRef.current = start;
         setClock(start);
         setPlaying(false);
@@ -176,9 +174,17 @@ export function App({ token }: { token: string }) {
   }, [api, selected]);
 
   const seek = useCallback((time: number) => {
-    clockRef.current = time;
-    setClock(time);
+    const [start, end] = bounds.current;
+    const clamped = Math.min(end, Math.max(start, time));
+    clockRef.current = clamped;
+    setClock(clamped);
   }, []);
+
+  /** Play, pause, or — from the end — rewind and play again. */
+  const toggle = useCallback(() => {
+    if (!playing && clockRef.current >= bounds.current[1]) seek(bounds.current[0]);
+    setPlaying((on) => !on);
+  }, [playing, seek]);
 
   useEffect(() => {
     if (!loaded) return;
@@ -188,10 +194,11 @@ export function App({ token }: { token: string }) {
     const step = (now: number) => {
       if (playing) {
         const previous = lastFrame.current;
-        // Real elapsed time, not a fixed increment: a dropped frame must
-        // advance the clock by what it cost rather than by one tick, or
-        // playback drifts away from the timeline it is drawn against.
-        if (previous !== null) clockRef.current += now - previous;
+        // Real elapsed time scaled by the chosen speed, not a fixed
+        // increment: a dropped frame must advance the clock by what it cost
+        // rather than by one tick, or playback drifts away from the timeline
+        // it is drawn against.
+        if (previous !== null) clockRef.current += (now - previous) * speed;
         lastFrame.current = now;
         if (clockRef.current >= end) {
           clockRef.current = end;
@@ -205,7 +212,53 @@ export function App({ token }: { token: string }) {
     };
     frame = requestAnimationFrame(step);
     return () => cancelAnimationFrame(frame);
-  }, [loaded, playing]);
+  }, [loaded, playing, speed]);
+
+  // The reviewer's keyboard: space plays, arrows seek, comma and period step
+  // one recorded sample — the frame a key went down is usually the frame
+  // being looked for, and a mouse cannot land on it.
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      if (view !== "replay" || !loaded) return;
+      const target = event.target as HTMLElement | null;
+      if (target && ["INPUT", "TEXTAREA", "SELECT", "BUTTON"].includes(target.tagName)) return;
+
+      const samples = loaded.samples;
+      const stepSample = (direction: 1 | -1) => {
+        const at = sampleAt(samples.t, clockRef.current);
+        const next = Math.min(samples.t.length - 1, Math.max(0, at + direction));
+        setPlaying(false);
+        seek(samples.t[next]!);
+      };
+
+      switch (event.code) {
+        case "Space":
+          toggle();
+          break;
+        case "ArrowLeft":
+          seek(clockRef.current - (event.shiftKey ? 10_000 : 2_000));
+          break;
+        case "ArrowRight":
+          seek(clockRef.current + (event.shiftKey ? 10_000 : 2_000));
+          break;
+        case "Comma":
+          stepSample(-1);
+          break;
+        case "Period":
+          stepSample(1);
+          break;
+        case "Home":
+          setPlaying(false);
+          seek(bounds.current[0]);
+          break;
+        default:
+          return;
+      }
+      event.preventDefault();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [view, loaded, seek, toggle]);
 
   if (failure) {
     return (
@@ -346,18 +399,81 @@ export function App({ token }: { token: string }) {
             {loaded && (
               <div className="hairline-t">
                 <ErrorTimeline header={loaded.header} clock={clock} onSeek={seek} t={t} />
-                <div className="flex items-center gap-lg px-lg py-md">
+                <div className="flex flex-wrap items-center gap-md px-lg py-md">
                   <button
                     type="button"
-                    onClick={() => setPlaying((on) => !on)}
+                    onClick={toggle}
                     className="cursor-pointer rounded-pill border border-hairline px-lg py-xs text-body-sm text-ink hover:text-ink-hover"
                   >
-                    {playing ? t("player.pause") : t("player.play")}
+                    {playing
+                      ? t("player.pause")
+                      : clock >= bounds.current[1]
+                        ? t("player.replay")
+                        : t("player.play")}
                   </button>
-                  <p className="eyebrow max-w-[62ch] normal-case tracking-normal">
-                    {t("player.samplesOnlyHelp")}
-                  </p>
+
+                  <div
+                    className="flex items-center gap-xs"
+                    role="group"
+                    aria-label={t("player.speed")}
+                  >
+                    {[0.25, 0.5, 1, 1.5, 2].map((rate) => (
+                      <button
+                        key={rate}
+                        type="button"
+                        onClick={() => setSpeed(rate)}
+                        aria-pressed={speed === rate}
+                        className={`cursor-pointer rounded-pill border px-sm py-xs font-mono text-body-sm tabular-nums ${
+                          speed === rate
+                            ? "border-[color:var(--color-accent-breeze)] text-[color:var(--color-accent-breeze)]"
+                            : "border-hairline text-mute hover:text-ink-hover"
+                        }`}
+                      >
+                        {rate}×
+                      </button>
+                    ))}
+                  </div>
+
+                  <span className="font-mono text-body-sm tabular-nums text-body">
+                    {stamp(clock - bounds.current[0])} / {stamp(bounds.current[1] - bounds.current[0])}
+                  </span>
+
+                  {(loaded.header.analysis?.breaks.length ?? 0) > 0 && (
+                    <div className="flex items-center gap-xs">
+                      {([-1, 1] as const).map((direction) => {
+                        const breaks = loaded.header.analysis!.breaks;
+                        const target =
+                          direction === 1
+                            ? breaks.find((item) => item.time > clock + 80)
+                            : [...breaks].reverse().find((item) => item.time < clock - 1600);
+                        return (
+                          <button
+                            key={direction}
+                            type="button"
+                            disabled={!target}
+                            onClick={() => {
+                              if (!target) return;
+                              setPlaying(false);
+                              // Land shortly before the break, so the approach
+                              // that caused it is what plays, not the aftermath.
+                              seek(target.time - 1200);
+                            }}
+                            className="cursor-pointer rounded-pill border border-hairline px-sm py-xs text-body-sm text-mute hover:text-ink-hover disabled:cursor-default disabled:opacity-40"
+                          >
+                            {direction === -1 ? `‹ ${t("player.break")}` : `${t("player.break")} ›`}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  )}
+
+                  <div className="ml-auto">
+                    <KeyOverlay samples={loaded.samples} clock={clock} />
+                  </div>
                 </div>
+                <p className="eyebrow max-w-[100ch] px-lg pb-md normal-case tracking-normal">
+                  {t("player.shortcuts")} — {t("player.samplesOnlyHelp")}
+                </p>
               </div>
             )}
           </>

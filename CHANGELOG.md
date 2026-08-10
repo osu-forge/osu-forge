@@ -170,6 +170,14 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   a refresh and let an OBS scene pin one view; space plays and pauses; the
   layout stacks on narrow windows instead of breaking; and the corpus panel
   says when its answer arrived.
+- The replay player grows a transport. Playback speed from 0.25× to 2×
+  scaling the same clock the timeline is drawn against; an elapsed/total
+  readout; previous/next break buttons that land shortly before each break
+  so the approach that caused it is what plays; a key overlay lit from the
+  recorded mask with a running press count per input, mouse chips hidden for
+  replays that never used them; the timeline is a scrubber that keeps
+  seeking while dragged; `,` and `.` step one recorded sample; and playing
+  from the end rewinds first instead of doing nothing.
 
 ### Changed
 - Integration tests are deselected by default and require an environment

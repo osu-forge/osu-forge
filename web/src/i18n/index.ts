@@ -37,6 +37,10 @@ const en = {
   "player.play": "Play",
   "player.pause": "Pause",
   "player.speed": "Speed",
+  "player.replay": "Replay",
+  "player.break": "break",
+  "player.shortcuts":
+    "Space play/pause · ←/→ seek 2 s, Shift 10 s · , and . step one sample · Home start",
   "player.samplesOnly": "Recorded samples only",
   "player.samplesOnlyHelp":
     "A replay records about 60 cursor positions a second and nothing between them. Points are what was measured; the faint line only joins them.",
@@ -135,6 +139,10 @@ const ko: Record<Key, string> = {
   "player.play": "재생",
   "player.pause": "일시정지",
   "player.speed": "속도",
+  "player.replay": "처음부터",
+  "player.break": "브레이크",
+  "player.shortcuts":
+    "Space 재생/정지 · ←/→ 2초 이동, Shift 10초 · , 와 . 표본 단위 이동 · Home 처음으로",
   "player.samplesOnly": "기록된 표본만",
   "player.samplesOnlyHelp":
     "리플레이는 커서 위치를 초당 약 60번 기록하고 그 사이는 기록하지 않습니다. 점이 실제로 측정된 것이고, 흐린 선은 점을 잇기만 합니다.",
