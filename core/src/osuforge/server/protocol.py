@@ -59,6 +59,8 @@ import osu_forge_diffcalc as diffcalc
 from osuforge.analysis.clustering import ClusteredMean
 from osuforge.analysis.corpus import Diagnosis
 from osuforge.analysis.progress import Progress
+from osuforge.analysis.verification import verification_json
+from osuforge.analysis.verify import Comparison
 from osuforge.replay.model import ReplayFrame
 from osuforge.replay.simulate import Grade, Simulation
 from osuforge.replay.validate import CorpusHealth
@@ -271,12 +273,20 @@ def _estimate_block(found: ClusteredMean) -> dict[str, Any]:
     }
 
 
-def _progress_block(found: Progress) -> dict[str, Any]:
+def _progress_block(
+    found: Progress, verification: tuple[Comparison, str | None] | None
+) -> dict[str, Any]:
     """The corpus over time, as the page needs it.
 
     The per-session points are descriptions and travel without intervals; the
     only interval in this block sits on the difference, because that is the
     only place there are enough sessions to earn one.
+
+    The verdict rides inside this block rather than beside it because it scores
+    this boundary and no other. It is `None` on a midpoint split, which is a
+    description of time and predicts nothing, and it can be present while
+    `shift` is `None`: the two refusals count sessions their own way and are
+    entitled to disagree about whether this corpus is thick enough.
     """
     boundary: dict[str, Any] | None = None
     if found.boundary_kind is not None and found.boundary_at is not None:
@@ -317,6 +327,7 @@ def _progress_block(found: Progress) -> dict[str, Any]:
             }
         ),
         "insufficient": found.insufficient,
+        "verification": verification_json(verification),
     }
 
 
@@ -330,6 +341,7 @@ def corpus_payload(
     local_offsets_known: bool,
     reading: str | None = None,
     progress: Progress | None = None,
+    verification: tuple[Comparison, str | None] | None = None,
 ) -> dict[str, Any]:
     """The corpus diagnosis, as the page needs it.
 
@@ -396,7 +408,7 @@ def corpus_payload(
         },
         # Absent rather than empty when the caller did not compute it, so a
         # page can tell "no progress view here" from "nothing has changed".
-        "progress": None if progress is None else _progress_block(progress),
+        "progress": None if progress is None else _progress_block(progress, verification),
         "beatmaps": {
             "played": beatmaps_played,
             "reading": reading,

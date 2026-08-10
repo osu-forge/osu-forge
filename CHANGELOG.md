@@ -256,6 +256,18 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   recommendation into evidence for itself. `forge diagnose --all-epochs` builds
   the boundary from the journal's snapshots, prints the verdict under the
   progress block, and carries it in `--json`.
+- The served corpus panel shows that verdict too — the same confirmed, partial,
+  contradicted, unchanged or insufficient the command prints, reached by the
+  command's own code rather than a second copy of it. The two screens read one
+  journal and one corpus, and only one of them could say a change went the wrong
+  way; a progress split shown without the verdict is a screen where a
+  recommendation cannot fail. `forge serve` reads the journal's settings
+  snapshots at startup beside the epochs it already read, the payload carries
+  the whole record under `progress.verification`, and the panel prints the
+  verdict, the predicted-against-observed move and the reason — deliberately
+  with no interval of its own. Progress and verification each draw their own
+  bootstrap over the same difference and disagree in the third decimal when that
+  route wins, so the interval stays where it already was, once, on the shift.
 
 ### Changed
 - The playback end-to-end test drives `forge serve` itself, and the test-only
