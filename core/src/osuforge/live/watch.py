@@ -13,7 +13,6 @@ simulator did not reproduce is shown as such rather than quietly left out.
 
 from __future__ import annotations
 
-import hashlib
 import math
 import os
 from dataclasses import dataclass, field
@@ -25,13 +24,15 @@ import osu_forge_diffcalc as diffcalc
 from osuforge.analysis.failures import Failure, FailureReport, failures
 from osuforge.analysis.patterns import Attribution, Share, attribute
 from osuforge.replay.frames import Button
-from osuforge.replay.model import Replay
-from osuforge.replay.parse import ReplayParseError, parse_path
-from osuforge.replay.simulate import Grade, Simulation, simulate
-from osuforge.replay.validate import Agreement, Validation, validate
+from osuforge.replay.simulate import Grade
+from osuforge.replay.source import BeatmapIndex, Judged, judge
+from osuforge.replay.validate import Agreement
 
 __all__ = [
     "POLL_SECONDS",
+    # Re-exported: locating the beatmap and judging the replay against it is
+    # shared with the corpus, and lives in `osuforge.replay.source` so that
+    # neither reader owns it.
     "BeatmapIndex",
     "Play",
     "Session",
@@ -193,63 +194,18 @@ class Session:
         return k1 / (k1 + k2) if k1 + k2 else math.nan
 
 
-class BeatmapIndex:
-    """Beatmaps by MD5, so a replay can find the map it was played on.
+def _play_from(judged: Judged) -> Play:
+    path, replay = judged.path, judged.replay
+    beatmap, played = judged.beatmap, judged.played
+    simulation, check = judged.simulation, judged.check
 
-    Built once and topped up. A full scan of a real collection takes under half a
-    second, but doing it every poll would read half a gigabyte a minute for no
-    reason, so only files that appeared since last time are hashed.
-    """
-
-    def __init__(self, songs: Path) -> None:
-        self.songs = songs
-        self._by_hash: dict[str, Path] = {}
-        self._seen: set[Path] = set()
-        self.refresh()
-
-    def refresh(self) -> int:
-        added = 0
-        for path in self.songs.rglob("*.osu"):
-            if path in self._seen:
-                continue
-            self._seen.add(path)
-            try:
-                digest = hashlib.md5(path.read_bytes()).hexdigest()
-            except OSError:
-                continue
-            self._by_hash.setdefault(digest, path)
-            added += 1
-        return added
-
-    def get(self, beatmap_hash: str) -> Path | None:
-        found = self._by_hash.get(beatmap_hash)
-        if found is None:
-            # A map downloaded since the index was built is the ordinary reason
-            # for a miss, and it is worth one rescan before giving up.
-            self.refresh()
-            found = self._by_hash.get(beatmap_hash)
-        return found
-
-    def __len__(self) -> int:
-        return len(self._by_hash)
-
-
-def _play_from(
-    path: Path,
-    replay: Replay,
-    beatmap: diffcalc.Beatmap,
-    beatmap_path: Path,
-    simulation: Simulation,
-    check: Validation,
-) -> Play:
     presses: dict[Button, int] = {}
     for event in simulation.frames.press_events:
         presses[event.button] = presses.get(event.button, 0) + 1
-    played = beatmap.with_mods(int(replay.mods))
 
     background: Path | None = None
     if beatmap.background:
-        candidate = beatmap_path.parent / beatmap.background
+        candidate = judged.beatmap_path.parent / beatmap.background
         # Checked rather than assumed. A map whose background was deleted, or
         # whose Events section names a file that is not there, would otherwise
         # render as a broken image on every row.
@@ -290,22 +246,5 @@ def analyse(path: Path, index: BeatmapIndex) -> Play | str:
     A reason rather than `None`, because "the beatmap is not installed" and "the
     file is corrupt" want different responses from whoever is reading the page.
     """
-    try:
-        replay = parse_path(path)
-    except (ReplayParseError, OSError) as exc:
-        return str(exc)
-    if not replay.usable_for_timing:
-        return "not an osu!standard play by a person"
-
-    beatmap_path = index.get(replay.beatmap_hash)
-    if beatmap_path is None:
-        return "the beatmap for this replay is not in the songs folder"
-
-    try:
-        beatmap = diffcalc.Beatmap.from_file(beatmap_path)
-    except diffcalc.BeatmapError as exc:
-        return str(exc)
-
-    simulation = simulate(replay, beatmap)
-    check = validate(simulation, replay.judgements)
-    return _play_from(path, replay, beatmap, beatmap_path, simulation, check)
+    judged = judge(path, index)
+    return judged if isinstance(judged, str) else _play_from(judged)

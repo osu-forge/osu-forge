@@ -96,6 +96,33 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 - `osuforge.replay.oracle` — object-by-object comparison against circleguard,
   run as a separate process in an isolated environment. This is what authorises
   an offset recommendation; the header screen on its own never does.
+- `web/` — an Astro + React page that serves the replays back, with the
+  playfield drawn in WebGL2 from shaders compiled at build time rather than at
+  load. Spinners, repeat sliders, combo numbers and follow points are drawn
+  because the things a viewer is looking for are not visible without them, and
+  the cursor is interpolated between the two samples bracketing the clock while
+  the samples themselves stay drawn underneath.
+- `osuforge.server` — the local server the page talks to, and
+  `forge serve`. New plays are pushed to an open page as they finish.
+- `web/src/lib/cause.ts` — why each break happened, read off what was recorded
+  against that map's own windows, with the number every verdict came from. A
+  dropped slider deliberately stops at how much was collected: telling "the key
+  came up" from "the cursor left" needs per-frame tracking that does not exist
+  yet, and guessing would be the most useful-sounding wrong answer available.
+- `osuforge.analysis.corpus` — timing bias, timing spread and arrival as three
+  separate axes, each carrying whether a setting change follows from it. Refuses
+  below ten replays or three sessions and says which of the two is missing, and
+  `by_beatmap` takes the same estimate per map so a weakness on one map can be
+  told from a habit that follows the player everywhere.
+- `osuforge.analysis.gather` and `forge diagnose` — the corpus reached from a
+  replay folder. Every replay is simulated against its beatmap, screened, and
+  reduced to hit errors in real milliseconds; sessions are derived from the gaps
+  between plays, local offsets are read from `osu!.db` rather than assumed, and
+  only replays played under the settings now in force are pooled. Everything
+  left out is named with why.
+- `osuforge.replay.source` — locating a replay's beatmap and judging the two
+  together, shared by the live page and the corpus so that the two cannot
+  disagree about which objects a play hit.
 
 ### Changed
 - Integration tests are deselected by default and require an environment
