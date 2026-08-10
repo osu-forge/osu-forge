@@ -29,6 +29,7 @@
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",
     "license-checker-rseidelsohn": "^4.4.2",
+    "playwright-core": "1.62.1",
     "tailwindcss": "^4.0.0",
     "typescript": "^5.7.0"
   }

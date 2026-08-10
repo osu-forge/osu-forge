@@ -94,9 +94,16 @@ testpaths = ["tests"]
 # variable points them at one, a real osu! install — so a plain run has to stay
 # incapable of touching either. Run them with:
 #     OSU_FORGE_REPLAYS="%LOCALAPPDATA%\osu!\Data\r" pytest -m integration
-addopts = '-q --strict-markers -m "not integration"'
+#
+# The end-to-end test is deselected for a different reason: it needs a built
+# page, a Node runtime and a chromium, and it drives all three for the better
+# part of a minute. Run it with:
+#     cd web && npm run build
+#     pytest tests/test_e2e_playback.py -m e2e
+addopts = '-q --strict-markers -m "not integration and not e2e"'
 markers = [
     "integration: reads real hardware or a real osu! install (opt in with -m integration)",
+    "e2e: drives the built page in a real browser (opt in with -m e2e)",
 ]
 
 [tool.importlinter]
