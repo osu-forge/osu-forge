@@ -123,6 +123,43 @@ class TestData:
             assert client.get(f"/api/replays/{attempt}/header", headers=auth()).status_code == 404
 
 
+class TestBackground:
+    def build(self, access: Access, payload: Any) -> TestClient:
+        app = build_app(access, page=PAGE, payloads={"a.osr": payload})
+        return TestClient(app, base_url=f"http://127.0.0.1:{PORT}")
+
+    def test_a_background_comes_back_with_its_kind(self, access: Access, tmp_path: Any) -> None:
+        image = tmp_path / "bg.jpg"
+        image.write_bytes(b"\xff\xd8\xff\xdbjpeg-ish")
+        payload = _Payload()
+        payload.background = image
+        response = self.build(access, payload).get("/api/replays/a.osr/background", headers=auth())
+        assert response.status_code == 200
+        assert response.headers["content-type"] == "image/jpeg"
+        assert response.content.startswith(b"\xff\xd8")
+
+    def test_a_map_without_one_is_a_404(self, access: Access) -> None:
+        client = self.build(access, _Payload())
+        assert client.get("/api/replays/a.osr/background", headers=auth()).status_code == 404
+
+    def test_a_file_deleted_since_startup_is_a_404_not_a_crash(
+        self, access: Access, tmp_path: Any
+    ) -> None:
+        payload = _Payload()
+        payload.background = tmp_path / "gone.png"
+        client = self.build(access, payload)
+        assert client.get("/api/replays/a.osr/background", headers=auth()).status_code == 404
+
+    def test_it_needs_the_token_like_everything_under_api(
+        self, access: Access, tmp_path: Any
+    ) -> None:
+        image = tmp_path / "bg.png"
+        image.write_bytes(b"png")
+        payload = _Payload()
+        payload.background = image
+        assert self.build(access, payload).get("/api/replays/a.osr/background").status_code == 401
+
+
 class TestCorpus:
     def build(self, access: Access, corpus: Any) -> TestClient:
         app = build_app(

@@ -178,6 +178,17 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   replays that never used them; the timeline is a scrubber that keeps
   seeking while dragged; `,` and `.` step one recorded sample; and playing
   from the end rewinds first instead of doing nothing.
+- The player shows the play as it stands at the playhead. Exact running
+  accuracy, unstable rate and judgement counts — every judgement at or
+  before the clock, nothing projected, and deliberately no running combo
+  because reconstructing one exactly needs slider parts the wire does not
+  carry. The game's accuracy meter, rebuilt from recorded data: the last
+  dozen hits as ticks on the judgement-window scale with a marker at their
+  mean. `[` and `]` mark an A–B loop the clock snaps back through, drawn on
+  the timeline and dismissible from the transport. And the map's own
+  background sits dimmed under the playfield, served read-only from a path
+  resolved at startup (`/api/replays/{name}/background`) — the one response
+  read from disk at request time, for a file the request cannot choose.
 
 ### Changed
 - Integration tests are deselected by default and require an environment

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AnalysisPanel } from "@/components/Analysis";
 import { CorpusPanel } from "@/components/Corpus";
 import { KeyOverlay } from "@/components/KeyOverlay";
+import { LiveHud } from "@/components/LiveHud";
 import { Playfield } from "@/components/Playfield";
 import { ErrorTimeline } from "@/components/ErrorTimeline";
 import { DEFAULT_LOCALE, detectLocale, translator, type Locale } from "@/i18n";
@@ -28,6 +29,7 @@ interface Loaded {
   header: ReplayHeader;
   samples: Samples;
   paths: Float32Array;
+  backdrop: string | null;
 }
 
 /** The game's own accuracy formula, from the counts every header carries. */
@@ -80,6 +82,13 @@ export function App({ token }: { token: string }) {
   const lastFrame = useRef<number | null>(null);
   /** Recording bounds of the loaded replay, for clamping every seek. */
   const bounds = useRef<[number, number]>([0, 0]);
+  /** A–B section repeat, map milliseconds. Read by the clock loop via a ref
+   *  so setting it does not restart the animation frame. */
+  const [loop, setLoop] = useState<[number, number] | null>(null);
+  const loopRef = useRef(loop);
+  useEffect(() => {
+    loopRef.current = loop;
+  }, [loop]);
 
   useEffect(() => {
     setLocale(detectLocale(navigator.languages ?? [navigator.language]));
@@ -153,11 +162,17 @@ export function App({ token }: { token: string }) {
   useEffect(() => {
     if (!selected) return;
     let cancelled = false;
+    let backdrop: string | null = null;
     setLoaded(null);
+    setLoop(null);
     api
       .load(selected)
       .then((result) => {
-        if (cancelled) return;
+        if (cancelled) {
+          if (result.backdrop) URL.revokeObjectURL(result.backdrop);
+          return;
+        }
+        backdrop = result.backdrop;
         setLoaded(result);
         const start = result.samples.t[0] ?? 0;
         bounds.current = [start, result.samples.t[result.samples.t.length - 1] ?? start];
@@ -170,6 +185,9 @@ export function App({ token }: { token: string }) {
       });
     return () => {
       cancelled = true;
+      // The object URL holds the decoded image alive; a replay switch would
+      // otherwise leak one background per play browsed.
+      if (backdrop) URL.revokeObjectURL(backdrop);
     };
   }, [api, selected]);
 
@@ -200,7 +218,10 @@ export function App({ token }: { token: string }) {
         // it is drawn against.
         if (previous !== null) clockRef.current += (now - previous) * speed;
         lastFrame.current = now;
-        if (clockRef.current >= end) {
+        const section = loopRef.current;
+        if (section && clockRef.current >= section[1]) {
+          clockRef.current = section[0];
+        } else if (clockRef.current >= end) {
           clockRef.current = end;
           setPlaying(false);
         }
@@ -250,6 +271,21 @@ export function App({ token }: { token: string }) {
         case "Home":
           setPlaying(false);
           seek(bounds.current[0]);
+          break;
+        // A section to study, marked from the playhead: `[` opens it here,
+        // `]` closes it here, backslash lets go. An end before the start is
+        // ignored rather than guessed at.
+        case "BracketLeft":
+          setLoop((current) => [clockRef.current, current?.[1] ?? bounds.current[1]]);
+          break;
+        case "BracketRight":
+          setLoop((current) => {
+            const from = current?.[0] ?? bounds.current[0];
+            return clockRef.current > from ? [from, clockRef.current] : current;
+          });
+          break;
+        case "Backslash":
+          setLoop(null);
           break;
         default:
           return;
@@ -374,7 +410,16 @@ export function App({ token }: { token: string }) {
         ) : (
           <>
             <div className="grid min-h-0 flex-1 grid-cols-1 lg:grid-cols-[1fr_380px]">
-              <div className="min-h-0">
+              <div className="relative min-h-0 overflow-hidden">
+                {loaded?.backdrop && (
+                  // Dim enough that the field stays the subject; the image is
+                  // orientation, not decoration.
+                  <img
+                    src={loaded.backdrop}
+                    alt=""
+                    className="absolute inset-0 h-full w-full object-cover opacity-15"
+                  />
+                )}
                 {loaded && (
                   <Playfield
                     header={loaded.header}
@@ -383,6 +428,7 @@ export function App({ token }: { token: string }) {
                     clock={clock}
                   />
                 )}
+                {loaded && <LiveHud header={loaded.header} clock={clock} t={t} />}
               </div>
               <aside className="hairline-l min-h-0 overflow-y-auto border-l border-hairline">
                 {loaded && (
@@ -398,7 +444,13 @@ export function App({ token }: { token: string }) {
 
             {loaded && (
               <div className="hairline-t">
-                <ErrorTimeline header={loaded.header} clock={clock} onSeek={seek} t={t} />
+                <ErrorTimeline
+                  header={loaded.header}
+                  clock={clock}
+                  onSeek={seek}
+                  loop={loop}
+                  t={t}
+                />
                 <div className="flex flex-wrap items-center gap-md px-lg py-md">
                   <button
                     type="button"
@@ -437,6 +489,17 @@ export function App({ token }: { token: string }) {
                   <span className="font-mono text-body-sm tabular-nums text-body">
                     {stamp(clock - bounds.current[0])} / {stamp(bounds.current[1] - bounds.current[0])}
                   </span>
+
+                  {loop && (
+                    <button
+                      type="button"
+                      onClick={() => setLoop(null)}
+                      aria-label={t("player.loopClear")}
+                      className="cursor-pointer rounded-pill border border-[color:var(--color-accent-breeze)] px-sm py-xs font-mono text-body-sm tabular-nums text-[color:var(--color-accent-breeze)]"
+                    >
+                      A–B {stamp(loop[0] - bounds.current[0])}–{stamp(loop[1] - bounds.current[0])} ✕
+                    </button>
+                  )}
 
                   {(loaded.header.analysis?.breaks.length ?? 0) > 0 && (
                     <div className="flex items-center gap-xs">
