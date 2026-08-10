@@ -1,0 +1,202 @@
+"""The corpus the server answers for, and what its answer admits to.
+
+The decisions under test are the ones a page cannot check for itself: whether
+disbelieved plays stayed out of the entries while still counting against the
+corpus's health, whether sessions came from the replays' own timestamps, and
+whether the answer says plainly that nothing here authorises a recommendation.
+"""
+
+from __future__ import annotations
+
+import json
+from datetime import UTC, datetime, timedelta
+
+import numpy as np
+
+from osuforge.replay.validate import Agreement
+from osuforge.server.corpus import CorpusState
+
+START = datetime(2026, 8, 1, 19, 0, tzinfo=UTC)
+
+
+def feed(
+    state: CorpusState,
+    *,
+    sessions: int = 4,
+    replays: int = 3,
+    hits: int = 120,
+    mean: float = 6.0,
+    beatmap: str = "map-a",
+    agreement: Agreement = Agreement.EXACT,
+    seed: int = 3,
+) -> None:
+    """Plays on separate days, well past the session gap."""
+    rng = np.random.default_rng(seed)
+    for session in range(sessions):
+        for index in range(replays):
+            state.add(
+                f"{beatmap}-s{session}r{index}.osr",
+                beatmap_hash=beatmap,
+                beatmap=f"Artist - Title [{beatmap}]",
+                played_at=START + timedelta(days=session, minutes=5 * index),
+                errors=rng.normal(mean, 12.0, hits).tolist(),
+                miss_rate=0.02,
+                accuracy=0.97,
+                breaks=1,
+                agreement=agreement,
+                agreement_reason="all judgements reproduce",
+                fractional_windows=False,
+            )
+
+
+class TestSessions:
+    def test_sessions_come_from_the_timestamps_not_the_caller(self) -> None:
+        # Four days of plays, two hours apart within a day: four sessions.
+        state = CorpusState()
+        feed(state, sessions=4, replays=3)
+        answer = state.recompute()
+        assert answer["sessions"] == 4
+        assert answer["replays"] == 12
+
+    def test_one_sitting_is_one_session_however_many_plays(self) -> None:
+        state = CorpusState()
+        rng = np.random.default_rng(1)
+        for index in range(12):
+            state.add(
+                f"r{index}.osr",
+                beatmap_hash="m",
+                beatmap="m",
+                played_at=START + timedelta(minutes=6 * index),
+                errors=rng.normal(0.0, 10.0, 120).tolist(),
+                miss_rate=0.0,
+                accuracy=0.98,
+                breaks=0,
+                agreement=Agreement.EXACT,
+                agreement_reason="all judgements reproduce",
+                fractional_windows=False,
+            )
+        answer = state.recompute()
+        # Refused: twelve replays in one evening are one session, and the
+        # refusal names the missing ingredient rather than showing a number.
+        assert answer["insufficient"] is not None
+        assert "session" in answer["insufficient"]
+
+
+class TestBelief:
+    def test_a_mismatched_play_is_excluded_and_named(self) -> None:
+        state = CorpusState()
+        feed(state, sessions=4, replays=3)
+        state.add(
+            "wrong.osr",
+            beatmap_hash="map-a",
+            beatmap="Artist - Title [map-a]",
+            played_at=START + timedelta(days=1, hours=1),
+            errors=[500.0] * 120,
+            miss_rate=0.02,
+            accuracy=0.5,
+            breaks=9,
+            agreement=Agreement.MISMATCH,
+            agreement_reason="judged 400 objects, the game judged 380.",
+            fractional_windows=False,
+        )
+        answer = state.recompute()
+        # Out of the estimate...
+        assert answer["replays"] == 12
+        # ...named with the screen's own reason...
+        assert "wrong.osr" in answer["excluded"]
+        assert "did not reproduce" in answer["excluded"]["wrong.osr"]
+        # ...and still counted against the corpus's health.
+        assert answer["health"]["total"] == 13
+        assert answer["health"]["usable"] == 12
+
+    def test_no_recommendation_without_the_oracle_whatever_the_numbers_say(self) -> None:
+        # A clear 6 ms bias, cleanly measured — and still not a recommendation,
+        # because nothing in a serve run has judged these simulations
+        # object by object.
+        state = CorpusState()
+        feed(state)
+        answer = state.recompute()
+        assert answer["health"]["may_recommend"] is False
+        assert any("oracle" in blocker for blocker in answer["health"]["blockers"])
+
+
+class TestAnswerShape:
+    def test_the_answer_is_json_all_the_way_down(self) -> None:
+        state = CorpusState()
+        feed(state)
+        # allow_nan off is the whole test: one NaN anywhere is a floor the
+        # middleware would fall through at request time.
+        json.dumps(state.recompute(), allow_nan=False)
+
+    def test_so_is_the_refusal(self) -> None:
+        state = CorpusState()
+        feed(state, sessions=1, replays=2)
+        answer = state.recompute()
+        assert answer["insufficient"] is not None
+        assert answer["bias"] is None
+        json.dumps(answer, allow_nan=False)
+
+    def test_an_empty_state_still_answers_honestly(self) -> None:
+        answer = CorpusState().recompute()
+        assert answer["insufficient"] is not None
+        assert answer["health"]["total"] == 0
+        json.dumps(answer, allow_nan=False)
+
+    def test_per_map_reporting_carries_the_thin_maps_as_a_count(self) -> None:
+        state = CorpusState()
+        feed(state, beatmap="map-a")
+        feed(state, beatmap="map-b", sessions=1, replays=1, seed=9)
+        answer = state.recompute()
+        reported = [entry["name"] for entry in answer["beatmaps"]["reported"]]
+        assert any("map-a" in name for name in reported)
+        assert not any("map-b" in name for name in reported)
+        # Two maps were played; one was too thin to report alone. The count is
+        # how the page can say so instead of silently showing a shorter table.
+        assert answer["beatmaps"]["played"] == 2
+
+    def test_the_reading_compares_pool_against_maps(self) -> None:
+        state = CorpusState()
+        feed(state, mean=6.0)
+        answer = state.recompute()
+        assert answer["beatmaps"]["reading"] is not None
+        assert "pooled" in answer["beatmaps"]["reading"]
+
+
+class TestCaching:
+    def test_an_unchanged_corpus_is_not_recomputed(self) -> None:
+        state = CorpusState()
+        feed(state)
+        first = state.recompute()
+        # Identity, not equality: the second call must return without running
+        # the statistics, and handing back the same object is the proof.
+        assert state.recompute() is first
+
+    def test_a_new_play_invalidates_the_answer(self) -> None:
+        state = CorpusState()
+        feed(state)
+        first = state.recompute()
+        rng = np.random.default_rng(7)
+        state.add(
+            "late-arrival.osr",
+            beatmap_hash="map-a",
+            beatmap="Artist - Title [map-a]",
+            played_at=START + timedelta(days=9),
+            errors=rng.normal(6.0, 12.0, 120).tolist(),
+            miss_rate=0.02,
+            accuracy=0.97,
+            breaks=0,
+            agreement=Agreement.CLOSE,
+            agreement_reason="grades differ by 1, within the 2 this map allows.",
+            fractional_windows=True,
+        )
+        fresh = state.recompute()
+        assert fresh is not first
+        assert fresh["replays"] == 13
+        assert fresh["sessions"] == 5
+        assert state.payload() is fresh
+
+    def test_payload_is_none_only_before_the_first_recompute(self) -> None:
+        state = CorpusState()
+        assert state.payload() is None
+        state.recompute()
+        assert state.payload() is not None

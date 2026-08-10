@@ -61,6 +61,7 @@ def build_app(
     assets: dict[str, tuple[bytes, str]] | None = None,
     broadcaster: Broadcaster | None = None,
     policy: str | None = None,
+    corpus: Callable[[], dict[str, Any] | None] | None = None,
 ) -> FastAPI:
     """Assemble the server.
 
@@ -74,6 +75,11 @@ def build_app(
     `broadcaster` is where connected sockets are registered so a watcher can
     push a new play to them. Optional: without one the socket still answers
     requests and simply never volunteers anything.
+
+    `corpus` returns the last corpus answer already computed, or `None` when
+    there is none yet. A callable rather than a dictionary because the answer
+    changes while the server runs, and a callable that only reads is what keeps
+    the seconds of statistics behind it off the request path.
     """
     app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
     static = assets or {}
@@ -124,6 +130,16 @@ def build_app(
                 {"name": name, "header": payload.header} for name, payload in payloads.items()
             ]
         }
+
+    @app.get("/api/corpus")
+    async def corpus_answer() -> dict[str, Any]:
+        # 404 rather than an empty object when there is nothing to serve. An
+        # empty object reads as "a corpus with nothing in it", which is a
+        # conclusion; the honest status is that no answer exists here.
+        found = corpus() if corpus is not None else None
+        if found is None:
+            raise HTTPException(status_code=404, detail="no corpus prepared")
+        return found
 
     @app.get("/api/replays/{name}/header")
     async def header(name: str) -> dict[str, Any]:
