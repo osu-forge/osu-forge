@@ -36,7 +36,7 @@ import asyncio
 import contextlib
 import errno
 import socket
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
@@ -128,6 +128,8 @@ def serve(
     runtime_path: Path | None = None,
     log_level: str = "warning",
     watcher: Watcher | None = None,
+    broadcaster: Broadcaster | None = None,
+    corpus: Callable[[], dict[str, Any] | None] | None = None,
 ) -> None:
     """Run until interrupted. Blocks.
 
@@ -138,18 +140,23 @@ def serve(
     `watcher` is the one exception, and a deliberate one: watching for a new
     play is the whole point of leaving the page open. It polls a folder chosen
     when the command started, not one a request can name.
+
+    `broadcaster` may be passed in by a caller that needs to push its own
+    events — a corpus that changed, not just a play that finished. Left unset,
+    one is created here and only the watcher speaks.
     """
     import uvicorn
 
     with prepare(port=port, runtime_path=runtime_path) as access:
-        broadcaster = Broadcaster()
+        listeners = broadcaster if broadcaster is not None else Broadcaster()
         app = build_app(
             access,
             page=site.page(access.token.value),
             payloads=payloads,
             assets=site.assets,
-            broadcaster=broadcaster,
+            broadcaster=listeners,
             policy=site.policy(),
+            corpus=corpus,
         )
 
         if watcher is not None:
@@ -158,7 +165,7 @@ def serve(
             async def _start_watching() -> None:
                 # Started here rather than before uvicorn, because the loop it
                 # runs on is the one uvicorn creates.
-                task = asyncio.get_running_loop().create_task(watcher.run(broadcaster))
+                task = asyncio.get_running_loop().create_task(watcher.run(listeners))
                 app.state.watcher_task = task
 
             @app.on_event("shutdown")

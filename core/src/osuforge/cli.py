@@ -344,12 +344,16 @@ def _scan(args: argparse.Namespace) -> int:
 
 def _serve(args: argparse.Namespace) -> int:
     """Read the site and the replays, then hand both to the server and block."""
+    import asyncio
+
     import osu_forge_diffcalc as diffcalc
 
     from osuforge.live.watch import BeatmapIndex, analyse
     from osuforge.replay.parse import ReplayParseError, parse_path
     from osuforge.replay.simulate import simulate
     from osuforge.server import (
+        Broadcaster,
+        CorpusState,
         ReplayPayload,
         ServerError,
         SiteMissingError,
@@ -387,6 +391,7 @@ def _serve(args: argparse.Namespace) -> int:
     index = BeatmapIndex(songs_dir)
     payloads: dict[str, Any] = {}
     skipped: dict[str, int] = {}
+    corpus = CorpusState()
 
     def note(reason: str) -> None:
         skipped[reason] = skipped.get(reason, 0) + 1
@@ -418,10 +423,28 @@ def _serve(args: argparse.Namespace) -> int:
         # still worth playing back — so the failure costs the numbers, not the
         # replay.
         play = analyse(path, index)
+        simulation = simulate(replay, plain)
+        if not isinstance(play, str):
+            # Recorded, not yet recomputed: the caller decides when to pay for
+            # the statistics, so a startup scan pays once rather than per play.
+            reported = replay.judgements
+            corpus.add(
+                path.name,
+                beatmap_hash=replay.beatmap_hash,
+                beatmap=f"{plain.artist} - {plain.title} [{plain.version}]",
+                played_at=play.played_at,
+                errors=play.errors,
+                miss_rate=reported.count_miss / reported.total if reported.total else 0.0,
+                accuracy=play.accuracy,
+                breaks=len(play.breaks),
+                agreement=play.agreement,
+                agreement_reason=play.agreement_reason,
+                fractional_windows=simulation.fractional_windows,
+            )
         return ReplayPayload.build(
             replay_name=path.name,
             beatmap=plain.with_mods(int(replay.mods)),
-            simulation=simulate(replay, plain),
+            simulation=simulation,
             rate=replay.rate,
             analysis=None if isinstance(play, str) else analysis_payload(play),
         )
@@ -447,11 +470,41 @@ def _serve(args: argparse.Namespace) -> int:
         print("error: nothing to serve", file=sys.stderr)
         return 2
 
+    # Paid here, once, so the page's first request finds the answer already
+    # computed — and so the terminal shows the same sentence the panel will.
+    print(f"corpus:   {corpus.recompute()['summary']}", file=sys.stderr)
+
+    broadcaster = Broadcaster()
+    refreshes: set[asyncio.Task[None]] = set()
+
+    def refresh_corpus() -> None:
+        """Recompute off the loop, then tell every open page.
+
+        A task rather than an await: the statistics take seconds, and the
+        watcher that calls this is on the same loop as every WebSocket. The
+        set keeps a live reference — a bare `create_task` result can be
+        collected mid-flight, which cancels it.
+        """
+
+        async def push() -> None:
+            try:
+                fresh = await asyncio.to_thread(corpus.recompute)
+                await broadcaster.send({"event": "corpus", "corpus": fresh})
+            except Exception as exc:
+                # Costs the panel an update, not the server its life — same
+                # posture as the watcher itself.
+                print(f"  corpus refresh failed: {exc}", file=sys.stderr)
+
+        task = asyncio.get_running_loop().create_task(push())
+        refreshes.add(task)
+        task.add_done_callback(refreshes.discard)
+
     async def on_new_replay(path: Path) -> dict[str, Any] | None:
         payload = prepare_replay(path)
         if payload is None:
             return None
         payloads[path.name] = payload
+        refresh_corpus()
         # The header only. It is a few kilobytes and it is everything the list
         # needs; the frames are half a megabyte and are not wanted until
         # someone selects this play.
@@ -467,7 +520,14 @@ def _serve(args: argparse.Namespace) -> int:
     print("Leave it open while you play; new plays appear without a reload.", file=sys.stderr)
     print("Ctrl+C to stop. Nothing is left listening or written afterwards.", file=sys.stderr)
     try:
-        serve(site=site, payloads=payloads, port=port, watcher=watcher)
+        serve(
+            site=site,
+            payloads=payloads,
+            port=port,
+            watcher=watcher,
+            broadcaster=broadcaster,
+            corpus=corpus.payload,
+        )
     except ServerError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 2

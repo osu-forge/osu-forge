@@ -55,8 +55,11 @@ from typing import Any
 
 import osu_forge_diffcalc as diffcalc
 
+from osuforge.analysis.clustering import ClusteredMean
+from osuforge.analysis.corpus import Diagnosis
 from osuforge.replay.model import ReplayFrame
 from osuforge.replay.simulate import Grade, Simulation
+from osuforge.replay.validate import CorpusHealth
 
 __all__ = [
     "FRAME_STRUCT",
@@ -64,6 +67,7 @@ __all__ = [
     "SAMPLE_BYTES",
     "SCHEMA_VERSION",
     "ReplayPayload",
+    "corpus_payload",
     "encode_frames",
     "encode_paths",
     "objects_payload",
@@ -161,6 +165,15 @@ _KIND_NAMES = {
 }
 
 
+def _finite(value: float) -> float | None:
+    """`None` for NaN and infinity, which have no JSON spelling.
+
+    The middleware serialises with `allow_nan` off, so an unguarded NaN is a
+    500 on the whole response rather than a hole in one field.
+    """
+    return value if math.isfinite(value) else None
+
+
 def analysis_payload(play: Any) -> dict[str, Any]:
     """One play's analysis, as the page needs it.
 
@@ -227,6 +240,95 @@ def analysis_payload(play: Any) -> dict[str, Any]:
             }
             for failure in play.breaks
         ],
+    }
+
+
+def corpus_payload(
+    diagnosis: Diagnosis,
+    *,
+    per_beatmap: dict[str, ClusteredMean],
+    beatmaps_played: int,
+    health: CorpusHealth,
+    unreproduced: dict[str, str],
+    reading: str | None = None,
+) -> dict[str, Any]:
+    """The corpus diagnosis, as the page needs it.
+
+    A shape, not a calculation — everything here was computed by
+    :mod:`osuforge.analysis.corpus` and :mod:`osuforge.replay.validate`, and
+    this only decides what travels and under which name.
+
+    Two honesty rails are part of the shape rather than optional extras.
+    `health` rides on every answer because the axes can be statistically sound
+    while the corpus they came from is not — `may_recommend` is what separates
+    a measurement from advice, and a page without it would show the first as
+    the second. And `insufficient` is a sentence rather than an absent key,
+    because "not enough data" and "nothing wrong" are opposite conclusions
+    that look identical as an empty panel.
+    """
+    bias = diagnosis.bias
+    timing = diagnosis.timing
+    return {
+        "replays": diagnosis.replays,
+        "sessions": diagnosis.sessions,
+        "hits": diagnosis.hits,
+        "summary": diagnosis.summary(),
+        "insufficient": diagnosis.insufficient,
+        "effective_hits": _finite(diagnosis.effective_hits),
+        "design_effect": None if bias is None else _finite(bias.design_effect),
+        "bias": (
+            None
+            if bias is None
+            else {
+                "mean": _finite(bias.mean),
+                "ci_low": _finite(bias.ci_low),
+                "ci_high": _finite(bias.ci_high),
+                "ci_source": bias.ci_source,
+            }
+        ),
+        "unstable_rate": None if timing is None else _finite(timing.unstable_rate),
+        "spread_ms": None if timing is None else _finite(timing.spread_ms),
+        "axes": [
+            {
+                "name": axis.name,
+                "verdict": axis.verdict,
+                "actionable": axis.actionable,
+                "detail": axis.detail,
+                "evidence": list(axis.evidence),
+            }
+            for axis in diagnosis.axes
+        ],
+        # One dictionary, because the page asks one question — "which plays are
+        # not in this answer, and why" — and whether the screen or the inclusion
+        # policy did the excluding is carried by the reason text itself.
+        "excluded": {**unreproduced, **diagnosis.dropped},
+        "health": {
+            "total": health.total,
+            "usable": health.usable,
+            "may_recommend": health.may_recommend,
+            "blockers": health.blockers(),
+            "summary": health.summary(),
+        },
+        "beatmaps": {
+            "played": beatmaps_played,
+            "reading": reading,
+            # Most-played first, so the map with the most evidence leads. Ties
+            # break on the name rather than on dict order, or two runs over the
+            # same corpus could disagree about a purely presentational thing.
+            "reported": [
+                {
+                    "name": name,
+                    "mean": _finite(found.mean),
+                    "ci_low": _finite(found.ci_low),
+                    "ci_high": _finite(found.ci_high),
+                    "replays": found.n_replays,
+                    "excludes_zero": found.excludes_zero,
+                }
+                for name, found in sorted(
+                    per_beatmap.items(), key=lambda item: (-item[1].n_replays, item[0])
+                )
+            ],
+        },
     }
 
 

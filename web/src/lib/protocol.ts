@@ -150,6 +150,72 @@ export interface Samples {
   keys: Uint8Array;
 }
 
+export interface CorpusAxis {
+  /** "timing bias", "timing spread", "arrival". */
+  name: string;
+  /** What to do, or that there is nothing to do. Both are outcomes. */
+  verdict: string;
+  /** Whether a setting change follows. False is the more common answer, and a
+   *  page that only renders true ones would say "change this" when it should
+   *  not. */
+  actionable: boolean;
+  detail: string;
+  evidence: string[];
+}
+
+export interface CorpusBeatmap {
+  name: string;
+  /** Real milliseconds, early negative. `null` where the estimator refused. */
+  mean: number | null;
+  ci_low: number | null;
+  ci_high: number | null;
+  replays: number;
+  /** Whether this map's own interval excludes zero — a shift it carries by
+   *  itself rather than one borrowed from the pool. */
+  excludes_zero: boolean;
+}
+
+export interface Corpus {
+  replays: number;
+  sessions: number;
+  hits: number;
+  summary: string;
+  /** Why the corpus cannot answer yet, or `null` when it can. "Not enough
+   *  data" and "nothing wrong" are opposite conclusions that look identical
+   *  as an empty panel, so this is a sentence rather than an absent key. */
+  insufficient: string | null;
+  /** How many independent hits the corpus is worth after clustering. */
+  effective_hits: number | null;
+  design_effect: number | null;
+  bias: {
+    mean: number | null;
+    ci_low: number | null;
+    ci_high: number | null;
+    ci_source: string;
+  } | null;
+  unstable_rate: number | null;
+  spread_ms: number | null;
+  axes: CorpusAxis[];
+  /** Replay name to the reason it is not in this answer — the simulation
+   *  screen and the inclusion policy both land here, each with its own words. */
+  excluded: Record<string, string>;
+  health: {
+    total: number;
+    usable: number;
+    /** False until an independent oracle has judged these simulations. What
+     *  separates a measurement from advice; the panel must not blur it. */
+    may_recommend: boolean;
+    blockers: string[];
+    summary: string;
+  };
+  beatmaps: {
+    played: number;
+    /** One sentence reading the pooled interval against the per-map ones. */
+    reading: string | null;
+    reported: CorpusBeatmap[];
+  };
+}
+
 export class ProtocolError extends Error {}
 
 export function decodeSamples(header: ReplayHeader, buffer: ArrayBuffer): Samples {
@@ -216,8 +282,12 @@ export interface Entry {
 export interface Client {
   list(): Promise<Entry[]>;
   load(name: string): Promise<{ header: ReplayHeader; samples: Samples; paths: Float32Array }>;
-  /** Watch for plays that finish while the page is open. Returns a closer. */
-  watch(onReplay: (entry: Entry) => void): () => void;
+  /** The corpus answer, or `null` when the server has none — a server built
+   *  without a corpus, not a corpus with nothing in it. */
+  corpus(): Promise<Corpus | null>;
+  /** Watch for plays that finish while the page is open, and for the corpus
+   *  answer changing underneath them. Returns a closer. */
+  watch(onReplay: (entry: Entry) => void, onCorpus?: (corpus: Corpus) => void): () => void;
 }
 
 /** The subprotocol the token rides on. A browser cannot set a header here. */
@@ -262,7 +332,17 @@ export function client(token: string, origin = ""): Client {
       return replays;
     },
 
-    watch(onReplay: (entry: Entry) => void) {
+    async corpus() {
+      const response = await fetch(`${origin}/api/corpus`, { headers: auth });
+      // 404 is an answer, not a failure: this server has no corpus to show,
+      // and the page hides the panel rather than showing an empty one.
+      if (response.status === 404) return null;
+      if (response.status === 401) throw new ProtocolError("unauthorised");
+      if (!response.ok) throw new ProtocolError(`/api/corpus: ${response.status}`);
+      return (await response.json()) as Corpus;
+    },
+
+    watch(onReplay: (entry: Entry) => void, onCorpus?: (corpus: Corpus) => void) {
       // Reconnecting rather than giving up: the server restarting is the
       // ordinary reason this drops, and a page that silently stops updating
       // after that is the failure this whole feature exists to remove. The
@@ -284,8 +364,9 @@ export function client(token: string, origin = ""): Client {
         socket.addEventListener("message", (event) => {
           if (typeof event.data !== "string") return;
           try {
-            const message = JSON.parse(event.data) as { event?: string } & Entry;
+            const message = JSON.parse(event.data) as { event?: string; corpus?: Corpus } & Entry;
             if (message.event === "replay" && message.header) onReplay(message);
+            else if (message.event === "corpus" && message.corpus) onCorpus?.(message.corpus);
           } catch {
             // A frame this page does not understand is not a reason to tear
             // down a connection that is otherwise working.

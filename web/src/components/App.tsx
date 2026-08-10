@@ -1,11 +1,13 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AnalysisPanel } from "@/components/Analysis";
+import { CorpusPanel } from "@/components/Corpus";
 import { Playfield } from "@/components/Playfield";
 import { ErrorTimeline } from "@/components/ErrorTimeline";
 import { DEFAULT_LOCALE, detectLocale, translator, type Locale } from "@/i18n";
 import {
   client,
   ProtocolError,
+  type Corpus,
   type Entry,
   type ReplayHeader,
   type Samples,
@@ -41,6 +43,11 @@ export function App({ token }: { token: string }) {
   const [loaded, setLoaded] = useState<Loaded | null>(null);
   const [failure, setFailure] = useState<string | null>(null);
 
+  /** `null` until the server has an answer — the entry point stays hidden
+   *  rather than opening onto an empty panel. */
+  const [corpus, setCorpus] = useState<Corpus | null>(null);
+  const [view, setView] = useState<"replay" | "corpus">("replay");
+
   const [playing, setPlaying] = useState(false);
   const [clock, setClock] = useState(0);
   const clockRef = useRef(0);
@@ -66,6 +73,16 @@ export function App({ token }: { token: string }) {
       });
   }, [api, t]);
 
+  // Fetched once; after that the server pushes a fresh answer whenever a new
+  // play changes it. Failure leaves the panel absent rather than the page
+  // broken — the corpus is an extra reading, not the page's spine.
+  useEffect(() => {
+    api
+      .corpus()
+      .then(setCorpus)
+      .catch(() => setCorpus(null));
+  }, [api]);
+
   // A play that finishes while the page is open is inserted, and nothing else
   // moves. That is the whole difference from a page that reloads itself: the
   // scroll position, the open selection and the playback clock all survive,
@@ -78,7 +95,7 @@ export function App({ token }: { token: string }) {
         return [entry, ...existing];
       });
       setArrived(entry.name);
-    });
+    }, setCorpus);
   }, [api]);
 
   useEffect(() => {
@@ -148,6 +165,21 @@ export function App({ token }: { token: string }) {
   return (
     <div className="grid h-screen grid-cols-[300px_1fr]">
       <nav className="hairline-r overflow-y-auto">
+        {corpus && (
+          <button
+            type="button"
+            onClick={() => setView("corpus")}
+            aria-current={view === "corpus"}
+            className="hairline-b block w-full cursor-pointer px-lg py-md text-left aria-[current=true]:bg-canvas-card hover:bg-canvas-card"
+          >
+            <div className="eyebrow">{t("corpus.title")}</div>
+            <div className="mt-xxs text-body-sm text-body">
+              {corpus.insufficient
+                ? t("corpus.collecting")
+                : t("corpus.subtitle", { n: corpus.replays, s: corpus.sessions })}
+            </div>
+          </button>
+        )}
         <div className="hairline-b px-lg py-md">
           <div className="eyebrow">{t("nav.replays")}</div>
           <div className="text-body-sm text-body">
@@ -160,8 +192,11 @@ export function App({ token }: { token: string }) {
           <button
             key={entry.name}
             type="button"
-            onClick={() => setSelected(entry.name)}
-            aria-current={entry.name === selected}
+            onClick={() => {
+              setSelected(entry.name);
+              setView("replay");
+            }}
+            aria-current={view === "replay" && entry.name === selected}
             className="hairline-b block w-full cursor-pointer px-lg py-md text-left text-body-sm aria-[current=true]:bg-canvas-card hover:bg-canvas-card"
           >
             <div className="truncate text-ink">
@@ -188,53 +223,65 @@ export function App({ token }: { token: string }) {
       <section className="flex min-w-0 flex-col">
         <header className="hairline-b flex items-baseline gap-lg px-xl py-md">
           <h1 className="text-display-xs">{t("app.title")}</h1>
-          {header && (
-            <span className="truncate text-body-sm text-body">
-              {header.beatmap.artist} — {header.beatmap.title} [{header.beatmap.version}]
-            </span>
+          {view === "corpus" ? (
+            <span className="truncate text-body-sm text-body">{t("corpus.axes")}</span>
+          ) : (
+            header && (
+              <span className="truncate text-body-sm text-body">
+                {header.beatmap.artist} — {header.beatmap.title} [{header.beatmap.version}]
+              </span>
+            )
           )}
           <span className="eyebrow ml-auto">{t("app.advisory")}</span>
         </header>
 
-        <div className="grid min-h-0 flex-1 grid-cols-1 lg:grid-cols-[1fr_380px]">
-          <div className="min-h-0">
-            {loaded && (
-              <Playfield
-                header={loaded.header}
-                samples={loaded.samples}
-                paths={loaded.paths}
-                clock={clock}
-              />
-            )}
+        {view === "corpus" ? (
+          <div className="min-h-0 flex-1 overflow-y-auto">
+            <CorpusPanel corpus={corpus} t={t} />
           </div>
-          <aside className="hairline-l min-h-0 overflow-y-auto border-l border-hairline">
-            {loaded && (
-              <AnalysisPanel
-                analysis={loaded.header.analysis}
-                header={loaded.header}
-                t={t}
-                onSeek={seek}
-              />
-            )}
-          </aside>
-        </div>
-
-        {loaded && (
-          <div className="hairline-t">
-            <ErrorTimeline header={loaded.header} clock={clock} onSeek={seek} t={t} />
-            <div className="flex items-center gap-lg px-lg py-md">
-              <button
-                type="button"
-                onClick={() => setPlaying((on) => !on)}
-                className="cursor-pointer rounded-pill border border-hairline px-lg py-xs text-body-sm text-ink hover:text-ink-hover"
-              >
-                {playing ? t("player.pause") : t("player.play")}
-              </button>
-              <p className="eyebrow max-w-[62ch] normal-case tracking-normal">
-                {t("player.samplesOnlyHelp")}
-              </p>
+        ) : (
+          <>
+            <div className="grid min-h-0 flex-1 grid-cols-1 lg:grid-cols-[1fr_380px]">
+              <div className="min-h-0">
+                {loaded && (
+                  <Playfield
+                    header={loaded.header}
+                    samples={loaded.samples}
+                    paths={loaded.paths}
+                    clock={clock}
+                  />
+                )}
+              </div>
+              <aside className="hairline-l min-h-0 overflow-y-auto border-l border-hairline">
+                {loaded && (
+                  <AnalysisPanel
+                    analysis={loaded.header.analysis}
+                    header={loaded.header}
+                    t={t}
+                    onSeek={seek}
+                  />
+                )}
+              </aside>
             </div>
-          </div>
+
+            {loaded && (
+              <div className="hairline-t">
+                <ErrorTimeline header={loaded.header} clock={clock} onSeek={seek} t={t} />
+                <div className="flex items-center gap-lg px-lg py-md">
+                  <button
+                    type="button"
+                    onClick={() => setPlaying((on) => !on)}
+                    className="cursor-pointer rounded-pill border border-hairline px-lg py-xs text-body-sm text-ink hover:text-ink-hover"
+                  >
+                    {playing ? t("player.pause") : t("player.play")}
+                  </button>
+                  <p className="eyebrow max-w-[62ch] normal-case tracking-normal">
+                    {t("player.samplesOnlyHelp")}
+                  </p>
+                </div>
+              </div>
+            )}
+          </>
         )}
       </section>
     </div>
