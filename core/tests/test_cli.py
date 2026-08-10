@@ -486,6 +486,73 @@ class TestDiagnose:
         _, out, _ = _run(self._argv(config_path, folders, "--json"), capsys)
         assert json.loads(out)["local_offsets_known"] is False
 
+    def portable_install(self, root: Path, *, plays: int = 0) -> Path:
+        """An osu! install nowhere near %LOCALAPPDATA%, with an index in it.
+
+        Everything `diagnose` reads by default lives here: the config, the
+        Songs tree, Data/r, and osu!.db beside them. Returns the config path,
+        which is the only thing the command is told.
+        """
+        from datetime import UTC, datetime, timedelta
+
+        from .test_analysis_gather import write_map, write_replay
+        from .test_sources_osudb import database, entry
+
+        folder = "1234 Artist - Title"
+        songs = root / "Songs" / folder
+        replays = root / "Data" / "r"
+        songs.mkdir(parents=True)
+        replays.mkdir(parents=True)
+        config = root / "osu!.tester.cfg"
+        config.write_bytes(REALISTIC_CFG)
+
+        digest = write_map(songs, "map", title="Some Song")
+        start = datetime(2026, 8, 1, 20, 0, tzinfo=UTC)
+        for index in range(plays):
+            write_replay(
+                replays,
+                f"{index:02d}.osr",
+                beatmap_hash=digest,
+                when=start + timedelta(days=index // 3, minutes=20 * (index % 3)),
+                errors=[2, 6, 10, 7, 5],
+            )
+        (root / "osu!.db").write_bytes(
+            database([entry(md5=digest, local_offset=-12, folder=folder)])
+        )
+        return config
+
+    def test_the_index_is_read_from_the_install_the_config_was_found_in(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        # osu!stable is portable. The install turns up on any drive, and osu!.db
+        # sits beside osu!.exe rather than under %LOCALAPPDATA% - so defaulting
+        # the path the way the reader does on its own would find some other
+        # install's index here, or none at all. That failure is silent: the
+        # offsets go unread, every map is assumed to carry zero, and the report
+        # blames the Songs folder, which was the one ingredient that was right.
+        config = self.portable_install(tmp_path / "d_drive" / "osu!", plays=12)
+        _, out, _ = _run(["diagnose", "--config", str(config), "--json"], capsys)
+        payload = json.loads(out)
+        assert payload["local_offsets_known"] is True
+        # Read is not enough; the offset has to reach the inclusion policy.
+        # Every replay here is of the map that carries it, so all twelve leave
+        # the pooled estimate rather than being averaged in on a shifted clock.
+        assert len(payload["dropped"]) == 12
+        assert all("-12 ms" in reason for reason in payload["dropped"].values())
+
+    def test_db_overrides_the_install_it_was_found_beside(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        # The default follows the install; --db still wins over it, including
+        # when it names a file that is not there. Pointed at nothing, the answer
+        # is "unknown" rather than the index sitting next to the config.
+        config = self.portable_install(tmp_path / "d_drive" / "osu!")
+        _, out, _ = _run(
+            ["diagnose", "--config", str(config), "--json", "--db", str(tmp_path / "gone.db")],
+            capsys,
+        )
+        assert json.loads(out)["local_offsets_known"] is False
+
 
 class TestParser:
     def test_a_command_is_required(self) -> None:
