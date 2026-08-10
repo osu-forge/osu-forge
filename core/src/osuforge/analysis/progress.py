@@ -177,6 +177,13 @@ class Progress:
     boundary_at: datetime | None = None
     boundary_label: str = ""
 
+    before_epoch: str | None = None
+    after_epoch: str | None = None
+    """The fingerprints either side of a `settings` boundary, so a caller can
+    look up what changed between them and score the change against what it
+    predicted. `None` on a midpoint split, which is a description of time and
+    predicts nothing."""
+
     shift: Shift | None = None
     insufficient: str | None = None
     """Why there is no shift, when there is none. A sentence rather than an
@@ -239,10 +246,16 @@ def fill_epochs(ordered: list[Entry], epochs: dict[str, str]) -> dict[str, str |
 
 def _settings_boundary(
     ordered: list[Entry], filled: dict[str, str | None]
-) -> tuple[datetime, str] | None:
-    """The most recent change of fingerprint, if there was one."""
+) -> tuple[datetime, str, str, str] | None:
+    """The most recent change of fingerprint, if there was one.
+
+    Carries the two fingerprints out with it. They are what a caller needs to
+    look up which settings differ, and re-deriving them from the boundary
+    timestamp elsewhere would be a second place for "which epoch is which" to
+    be decided.
+    """
     previous: str | None = None
-    boundary: tuple[datetime, str] | None = None
+    boundary: tuple[datetime, str, str, str] | None = None
     for entry in ordered:
         epoch = filled[entry.replay]
         if epoch is None:
@@ -251,6 +264,8 @@ def _settings_boundary(
             boundary = (
                 entry.played_at,
                 f"the settings changed ({previous} → {epoch})",
+                previous,
+                epoch,
             )
         previous = epoch
     return boundary
@@ -404,9 +419,15 @@ def progress(
     points = _series(kept)
 
     filled = fill_epochs(ordered, epochs or {})
-    boundary = _settings_boundary(ordered, filled)
+    change = _settings_boundary(ordered, filled)
+    before_epoch: str | None = None
+    after_epoch: str | None = None
+    boundary: tuple[datetime, str] | None
     kind = "settings"
-    if boundary is None:
+    if change is not None:
+        at, label, before_epoch, after_epoch = change
+        boundary = (at, label)
+    else:
         boundary = _midpoint_boundary(kept)
         kind = "midpoint"
     if boundary is None:
@@ -429,6 +450,8 @@ def progress(
             boundary_kind=kind,
             boundary_at=at,
             boundary_label=label,
+            before_epoch=before_epoch,
+            after_epoch=after_epoch,
             insufficient=outcome,
         )
     return Progress(
@@ -436,5 +459,7 @@ def progress(
         boundary_kind=kind,
         boundary_at=at,
         boundary_label=label,
+        before_epoch=before_epoch,
+        after_epoch=after_epoch,
         shift=outcome,
     )

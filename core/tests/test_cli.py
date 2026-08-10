@@ -11,6 +11,7 @@ from __future__ import annotations
 import io
 import json
 from pathlib import Path
+from typing import ClassVar
 
 import pytest
 
@@ -552,6 +553,208 @@ class TestDiagnose:
             capsys,
         )
         assert json.loads(out)["local_offsets_known"] is False
+
+
+class TestVerification:
+    """The prediction, checked against what happened next.
+
+    An offset recommendation predicts that the mean hit error moves the other
+    way by the same amount. A tool that reports success whichever way the
+    number actually moved launders a wrong recommendation into evidence for
+    itself, so the contradicted case is asserted here beside the confirmed one.
+    """
+
+    BEFORE: ClassVar[list[int]] = [2, 6, 10, 7, 5]
+    """Per-object error written into every replay before the change: +6 ms."""
+
+    def corpus(self, root: Path, *, after: list[int]) -> tuple[Path, Path]:
+        """Twelve plays over four evenings, six on each side of the change.
+
+        Every evening carries its own 1 ms of drift, alternating so that each
+        side's mean stays exactly where it was written. A corpus whose sessions
+        all have identical means has no between-session variance at all, which
+        is neither what replays look like nor what the clustered estimators are
+        written for.
+        """
+        from datetime import UTC, datetime, timedelta
+
+        from .test_analysis_gather import write_map, write_replay
+
+        songs = root / "Songs"
+        replays = root / "r"
+        songs.mkdir()
+        replays.mkdir()
+        digest = write_map(songs, "map", title="Some Song")
+        start = datetime(2026, 8, 1, 20, 0, tzinfo=UTC)
+        for index in range(12):
+            evening = index // 3
+            drift = 1 if evening % 2 else -1
+            write_replay(
+                replays,
+                f"{index:02d}.osr",
+                beatmap_hash=digest,
+                when=start + timedelta(days=evening, minutes=20 * (index % 3)),
+                errors=[error + drift for error in (self.BEFORE if index < 6 else after)],
+            )
+        return songs, replays
+
+    def journal(self, path: Path, replays: Path, *, snapshots: bool) -> Path:
+        """Two eras on record: offset 0, then offset +5.
+
+        Written through the same API `forge collect` writes it with, so the
+        settings behind each fingerprint are recorded the way a real run
+        records them — or, with `snapshots=False`, the way a journal from
+        before snapshots existed looks.
+        """
+        from osuforge.collect.epoch import ConfigEpoch
+        from osuforge.collect.journal import Entry, EpochSnapshot, Journal
+
+        from .test_collect import config
+
+        journal = Journal(path)
+        names = sorted(found.name for found in replays.glob("*.osr"))
+        for epoch, played in (
+            (ConfigEpoch.of(config(Offset="0")), names[:6]),
+            (ConfigEpoch.of(config(Offset="5")), names[6:]),
+        ):
+            if snapshots:
+                journal.record_epoch(
+                    EpochSnapshot(
+                        digest=epoch.digest,
+                        settings=epoch.settings,
+                        observed_at="2026-08-01T19:00:00+00:00",
+                    )
+                )
+            journal.append(
+                [
+                    Entry(
+                        replay=name,
+                        beatmap_hash="0" * 32,
+                        played_at="2026-08-01T20:00:00+00:00",
+                        epoch=epoch.digest,
+                        ruleset=0,
+                        mods=0,
+                        objects=120,
+                        misses=0,
+                        accuracy=1.0,
+                        observed_at="2026-08-01T21:00:00+00:00",
+                    )
+                    for name in played
+                ]
+            )
+        return path
+
+    def run(
+        self,
+        config_path: Path,
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
+        *,
+        after: list[int],
+        snapshots: bool = True,
+    ) -> tuple[dict, str]:
+        songs, replays = self.corpus(tmp_path, after=after)
+        journal = self.journal(tmp_path / "journal.jsonl", replays, snapshots=snapshots)
+        code, out, _ = _run(
+            [
+                "diagnose",
+                "--config",
+                str(config_path),
+                "--replays",
+                str(replays),
+                "--songs",
+                str(songs),
+                "--journal",
+                str(journal),
+                "--all-epochs",
+                "--json",
+            ],
+            capsys,
+        )
+        assert code == 0
+        code, _, err = _run(
+            [
+                "diagnose",
+                "--config",
+                str(config_path),
+                "--replays",
+                str(replays),
+                "--songs",
+                str(songs),
+                "--journal",
+                str(journal),
+                "--all-epochs",
+            ],
+            capsys,
+        )
+        assert code == 0
+        return json.loads(out)["verification"], err
+
+    def test_the_predicted_move_is_confirmed(
+        self, config_path: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        # Offset raised by 5, and the mean fell by 5 — which is what raising it
+        # is supposed to do, since the game then judges objects later.
+        verified, err = self.run(config_path, tmp_path, capsys, after=[-3, 1, 5, 2, 0])
+        assert verified["verdict"] == "confirmed"
+        assert verified["predicted"] == pytest.approx(-5.0)
+        assert verified["difference"] == pytest.approx(-5.0, abs=0.5)
+        assert verified["ci_high"] < 0.0
+        assert "Verification: confirmed" in err
+
+    def test_the_wrong_way_is_contradicted(
+        self, config_path: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        # The case this exists for. Same recorded change, mean went the other
+        # way, and the honest answer is to put the change back.
+        verified, err = self.run(config_path, tmp_path, capsys, after=[7, 11, 15, 12, 10])
+        assert verified["verdict"] == "contradicted"
+        assert verified["difference"] == pytest.approx(5.0, abs=0.5)
+        assert "put it back" in verified["reason"]
+        assert "Verification: contradicted" in err
+
+    def test_a_journal_from_before_snapshots_says_what_it_cannot_know(
+        self, config_path: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        # The fingerprints differ, so something changed; without the values
+        # behind them there is no way to say it was the offset. Reporting "no
+        # offset change here" would be a claim the record does not support.
+        verified, err = self.run(
+            config_path, tmp_path, capsys, after=[-3, 1, 5, 2, 0], snapshots=False
+        )
+        assert verified["predicted"] is None
+        assert verified["verdict"] != "confirmed"
+        assert "was not recorded" in verified["reason"]
+        assert "predates settings snapshots" in verified["reason"]
+        # Wrapped to the terminal, so the sentence is read back unwrapped.
+        assert "predates settings snapshots" in " ".join(err.split())
+
+    def test_no_settings_change_means_no_verification(
+        self, config_path: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        # The middle of the sessions is a description of time. Scoring it
+        # against a prediction nobody made is how a statistics screen starts
+        # agreeing with itself.
+        songs, replays = self.corpus(tmp_path, after=self.BEFORE)
+        _, out, _ = _run(
+            [
+                "diagnose",
+                "--config",
+                str(config_path),
+                "--replays",
+                str(replays),
+                "--songs",
+                str(songs),
+                "--journal",
+                str(tmp_path / "absent.jsonl"),
+                "--all-epochs",
+                "--json",
+            ],
+            capsys,
+        )
+        payload = json.loads(out)
+        assert payload["progress"]["boundary"]["kind"] == "midpoint"
+        assert payload["verification"] is None
 
 
 class TestParser:

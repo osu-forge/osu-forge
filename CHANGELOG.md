@@ -245,6 +245,17 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   all still parse. Fix-forward only: what changed across a boundary recorded
   before snapshots existed is unrecoverable, and `forge diagnose` says exactly
   that instead of reporting an empty diff as "nothing but the offset changed".
+- `osuforge.analysis.verify` — did the change actually help. An offset
+  recommendation is a falsifiable prediction (move the offset by +5 ms and the
+  mean hit error moves by -5 ms), and this scores a settings boundary against
+  it: confirmed, partial when the direction is right and the size is not,
+  contradicted when it moved the wrong way, unchanged when the interval on the
+  difference includes zero, and no verdict at all when either side is thinner
+  than five replays in two sessions. Contradicted is the reason it exists — a
+  tool that reports success whichever way the number moved launders a wrong
+  recommendation into evidence for itself. `forge diagnose --all-epochs` builds
+  the boundary from the journal's snapshots, prints the verdict under the
+  progress block, and carries it in `--json`.
 
 ### Changed
 - `forge serve` reads `osu!.db` for per-beatmap local offsets, with a `--db`
