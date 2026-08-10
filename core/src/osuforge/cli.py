@@ -49,6 +49,14 @@ _BASIS_LABEL = {
 _ADVISORY_NOTE = "osu-forge never modifies osu! files. Apply anything above yourself, in-game."
 
 
+def _finite(value: float) -> float | None:
+    """`None` for a NaN, so JSON carries "not measured" rather than a token
+    only some parsers accept and none of them agree about."""
+    import math
+
+    return value if math.isfinite(value) else None
+
+
 def _wrap(text: str, width: int, indent: str) -> list[str]:
     import textwrap
 
@@ -296,6 +304,197 @@ def _collect(args: argparse.Namespace) -> int:
     if not result.added:
         print("\nNothing new. Run this after playing; it is what accumulates the", file=out)
         print("sessions an offset estimate is actually limited by.", file=out)
+    return 0
+
+
+def _epoch_filter(
+    paths: list[Path], journal: Journal, *, pool: bool
+) -> tuple[list[Path], str, dict[str, str]]:
+    """Keep only the replays played under the settings now in force.
+
+    An offset measurement is about the configuration it was measured under, so
+    pooling across a change to one averages two different answers into one that
+    is neither. The journal is what knows when settings changed; without one,
+    everything is pooled and the caller is told that is what happened.
+
+    Returns the surviving paths, a sentence about which epoch they belong to,
+    and the file names left out with why.
+    """
+    if pool:
+        return (
+            paths,
+            "pooling every replay regardless of settings (--all-epochs)",
+            {},
+        )
+
+    recorded = {entry.replay: entry.epoch for entry in journal.entries()}
+    if not recorded:
+        return (
+            paths,
+            f"no journal at {journal.path}, so every replay is pooled and a settings "
+            "change since the oldest one would be averaged in unnoticed — run "
+            "`forge collect` after playing to record them",
+            {},
+        )
+
+    # The most recently recorded epoch is the one now in force. The journal is
+    # append-only and a dict preserves insertion order, so the last value read
+    # is the newest fingerprint seen.
+    current = list(recorded.values())[-1]
+
+    kept: list[Path] = []
+    dropped: dict[str, str] = {}
+    for path in paths:
+        epoch = recorded.get(path.name)
+        if epoch is None:
+            dropped[path.name] = "not in the journal; run `forge collect` to record it"
+        elif epoch != current:
+            dropped[path.name] = f"played under settings {epoch}, not the current {current}"
+        else:
+            kept.append(path)
+    return kept, f"settings {current}", dropped
+
+
+def _diagnose(args: argparse.Namespace) -> int:
+    """What the corpus supports, rather than what one play happened to do."""
+    from osuforge.analysis.corpus import by_beatmap, diagnose
+    from osuforge.analysis.gather import gather
+    from osuforge.sources import osudb
+
+    try:
+        config_path = find_config(args.config)
+    except ConfigNotFoundError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
+
+    install = config_path.parent
+    replay_dir = args.replays or install / "Data" / "r"
+    songs_dir = args.songs or install / "Songs"
+    for label, folder in (("replay", replay_dir), ("songs", songs_dir)):
+        if not folder.is_dir():
+            print(f"error: no {label} folder at {folder}", file=sys.stderr)
+            return 2
+
+    found = sorted(replay_dir.glob("*.osr"))
+    journal = Journal(args.journal or default_journal_path())
+    paths, epoch_note, out_of_epoch = _epoch_filter(found, journal, pool=args.all_epochs)
+
+    # Read rather than assumed. A map the player nudged in game is judged on a
+    # shifted clock, and its hit errors are not on the same scale as the rest —
+    # but a file that cannot be read has to mean "unknown", not "all zero".
+    verified, offsets_finding = osudb.load(path=args.db, songs=songs_dir)
+    offsets = verified.offsets if verified is not None and verified.trustworthy else None
+
+    collected = gather(paths, BeatmapIndex(songs_dir), offsets=offsets)
+    result = diagnose(collected.entries, decomposition=collected.decomposition)
+    maps = by_beatmap(collected.entries) if result.usable else {}
+
+    if args.json:
+        print(
+            json.dumps(
+                {
+                    "schema_version": 1,
+                    "replays": str(replay_dir),
+                    "epoch": epoch_note,
+                    "considered": len(found),
+                    "gathered": len(collected.entries),
+                    "skipped": collected.skipped | out_of_epoch,
+                    "local_offsets_known": collected.offsets_known,
+                    "usable": result.usable,
+                    "insufficient": result.insufficient,
+                    "summary": result.summary(),
+                    "hits": result.hits,
+                    "sessions": result.sessions,
+                    "effective_hits": _finite(result.effective_hits),
+                    "bias": (
+                        None
+                        if result.bias is None
+                        else {
+                            "mean": result.bias.mean,
+                            "ci_low": result.bias.ci_low,
+                            "ci_high": result.bias.ci_high,
+                            "ci_source": result.bias.ci_source,
+                            "design_effect": _finite(result.bias.design_effect),
+                            "icc": result.bias.icc,
+                        }
+                    ),
+                    "unstable_rate": (
+                        None if result.timing is None else _finite(result.timing.unstable_rate)
+                    ),
+                    "axes": [
+                        {
+                            "name": axis.name,
+                            "verdict": axis.verdict,
+                            "actionable": axis.actionable,
+                            "detail": axis.detail,
+                            "evidence": axis.evidence,
+                        }
+                        for axis in result.axes
+                    ],
+                    "dropped": result.dropped,
+                    "by_beatmap": {
+                        name: {
+                            "mean": mean.mean,
+                            "ci_low": mean.ci_low,
+                            "ci_high": mean.ci_high,
+                            "replays": mean.n_replays,
+                            "hits": mean.n_hits,
+                        }
+                        for name, mean in maps.items()
+                    },
+                },
+                indent=2,
+            )
+        )
+        return 0
+
+    out = sys.stderr
+    print(f"osu-forge {__version__}", file=out)
+    print(f"replays:  {replay_dir}", file=out)
+    print(f"epoch:    {epoch_note}", file=out)
+    print(collected.summary(), file=out)
+    if out_of_epoch:
+        print(f"{len(out_of_epoch)} replay(s) left out by the settings filter", file=out)
+    if not collected.offsets_known:
+        print(f"  {offsets_finding.title}", file=out)
+
+    print(f"\n{result.summary()}\n", file=out)
+    if not result.usable:
+        # Not an error. "Not enough data" and "nothing wrong" are opposite
+        # conclusions and only one of them is a reason to change something.
+        return 0
+
+    for axis in result.axes:
+        flag = "[actionable]" if axis.actionable else "[          ]"
+        print(f"{flag}  {axis.name:<14} {axis.verdict}", file=out)
+        for line in _wrap(axis.detail, 78, " " * 16):
+            print(line, file=out)
+        for evidence in axis.evidence:
+            for line in _wrap(evidence, 78, " " * 16):
+                print(line, file=out)
+        print(file=out)
+
+    if maps:
+        print("Per beatmap, where there are enough replays to say anything:", file=out)
+        for name, mean in sorted(maps.items(), key=lambda item: -abs(item[1].mean)):
+            marker = " *" if mean.excludes_zero else "  "
+            print(
+                f" {marker} {name[:52]:<52} {mean.mean:+6.1f} ms "
+                f"({mean.ci_low:+.1f} to {mean.ci_high:+.1f}, {mean.n_replays} replays)",
+                file=out,
+            )
+        print(
+            "\n* marks an interval that excludes zero. A weakness on one map is a map to "
+            "practise; one that follows you everywhere is a habit, and a pooled interval "
+            "that excludes zero while no individual map's does is what a global offset "
+            "looks like.",
+            file=out,
+        )
+
+    for name, reason in list(result.dropped.items())[:5]:
+        print(f"  excluded: {name}: {reason}", file=out)
+
+    print(f"\n{_ADVISORY_NOTE}", file=out)
     return 0
 
 
@@ -742,6 +941,41 @@ def _build_parser() -> argparse.ArgumentParser:
         help=f"where to append (default: {default_journal_path()})",
     )
     collect.set_defaults(func=_collect)
+
+    diagnose = subparsers.add_parser(
+        "diagnose",
+        parents=[common],
+        help="what keeps happening across every replay, not what one play did",
+        description=(
+            "Reads every replay in the folder, simulates each against its beatmap, and "
+            "reports what the corpus supports: whether your timing is biased, whether it "
+            "is merely inconsistent, and whether a weakness belongs to one map or "
+            "follows you everywhere. Refuses to answer below ten replays or three "
+            "sessions, and says which of the two is missing. Only replays played under "
+            "the settings now in force are pooled, because an offset measurement is "
+            "about the configuration it was measured under."
+        ),
+    )
+    diagnose.add_argument("--replays", type=Path, default=None, help="folder of .osr files")
+    diagnose.add_argument("--songs", type=Path, default=None, help="beatmap folder")
+    diagnose.add_argument(
+        "--journal",
+        type=Path,
+        default=None,
+        help=f"the settings history to group by (default: {default_journal_path()})",
+    )
+    diagnose.add_argument(
+        "--db",
+        type=Path,
+        default=None,
+        help="path to osu!.db, read for per-beatmap local offsets",
+    )
+    diagnose.add_argument(
+        "--all-epochs",
+        action="store_true",
+        help="pool replays across settings changes; averages configurations together",
+    )
+    diagnose.set_defaults(func=_diagnose)
 
     live = subparsers.add_parser(
         "live",

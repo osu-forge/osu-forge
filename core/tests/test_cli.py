@@ -280,7 +280,15 @@ class TestAdvisoryOnly:
         commands = set(subparsers.choices)  # type: ignore[arg-type]
         # `collect`, `live` and `profile` write, but only under
         # %LOCALAPPDATA%\osu-forge. Nothing here opens a file the game owns.
-        assert commands == {"doctor", "scan", "collect", "live", "profile", "serve"}
+        assert commands == {
+            "doctor",
+            "scan",
+            "collect",
+            "diagnose",
+            "live",
+            "profile",
+            "serve",
+        }
         assert not commands & {"apply", "fix", "write", "set", "install", "repair"}
 
     def test_the_config_file_is_untouched_by_a_full_run(
@@ -339,6 +347,144 @@ class TestAdvisoryOnly:
         assert combined, "the command produced no output, so this proves nothing"
         for sentinel in (SENTINEL_PASSWORD, SENTINEL_TOKEN):
             assert sentinel not in combined
+
+
+class TestDiagnose:
+    """The corpus command. The maps and replays come from the gather tests, so
+    the bias asserted on here is one that was written into the files."""
+
+    @pytest.fixture
+    def folders(self, tmp_path: Path) -> tuple[Path, Path]:
+        from datetime import UTC, datetime, timedelta
+
+        from .test_analysis_gather import write_map, write_replay
+
+        songs = tmp_path / "Songs"
+        replays = tmp_path / "r"
+        songs.mkdir()
+        replays.mkdir()
+        digest = write_map(songs, "map", title="Some Song")
+        start = datetime(2026, 8, 1, 20, 0, tzinfo=UTC)
+        for index in range(12):
+            write_replay(
+                replays,
+                f"{index:02d}.osr",
+                beatmap_hash=digest,
+                when=start + timedelta(days=index // 3, minutes=20 * (index % 3)),
+                errors=[2, 6, 10, 7, 5],
+            )
+        return songs, replays
+
+    def _argv(self, config_path: Path, folders: tuple[Path, Path], *extra: str) -> list[str]:
+        songs, replays = folders
+        return [
+            "diagnose",
+            "--config",
+            str(config_path),
+            "--replays",
+            str(replays),
+            "--songs",
+            str(songs),
+            *extra,
+        ]
+
+    def test_a_corpus_of_plays_produces_an_answer(
+        self, config_path: Path, folders: tuple[Path, Path], capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        code, _, err = _run(self._argv(config_path, folders), capsys)
+        assert code == 0
+        assert "independent hits" in err
+        assert "timing bias" in err
+        assert "timing spread" in err
+        # The design effect is the reason this command exists rather than a
+        # mean over every hit, so it belongs in the output rather than only in
+        # the JSON.
+        assert "design effect" in err
+
+    def test_json_carries_the_axes_and_their_actionability(
+        self, config_path: Path, folders: tuple[Path, Path], capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        code, out, err = _run(self._argv(config_path, folders, "--json"), capsys)
+        assert code == 0
+        assert err == ""
+        payload = json.loads(out)
+        assert payload["schema_version"] == 1
+        assert payload["usable"] is True
+        assert payload["gathered"] == 12
+        names = {axis["name"] for axis in payload["axes"]}
+        assert {"timing bias", "timing spread"} <= names
+        spread = next(a for a in payload["axes"] if a["name"] == "timing spread")
+        assert spread["actionable"] is False, "no offset value narrows a distribution"
+
+    def test_not_enough_data_exits_zero_and_says_what_is_missing(
+        self, config_path: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        songs = tmp_path / "Songs"
+        replays = tmp_path / "r"
+        songs.mkdir()
+        replays.mkdir()
+        code, out, _ = _run(self._argv(config_path, (songs, replays), "--json"), capsys)
+        # Not an error. "Not enough data" and "nothing wrong" are opposite
+        # conclusions, and a non-zero exit would file the first under the
+        # second's absence.
+        assert code == 0
+        payload = json.loads(out)
+        assert payload["usable"] is False
+        assert "more replay(s)" in payload["insufficient"]
+
+    def test_replays_from_other_settings_are_not_pooled(
+        self, config_path: Path, folders: tuple[Path, Path], capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        import json as _json
+
+        replays = folders[1]
+        journal = replays.parent / "journal.jsonl"
+        names = sorted(path.name for path in replays.glob("*.osr"))
+        with journal.open("w", encoding="utf-8", newline="\n") as handle:
+            for index, name in enumerate(names):
+                # The first three were played under an earlier configuration.
+                # Pooling them would average two answers into one that is
+                # neither, which is the whole reason the fingerprint exists.
+                epoch = "old00000" if index < 3 else "new00000"
+                handle.write(
+                    _json.dumps(
+                        {
+                            "replay": name,
+                            "beatmap_hash": "0" * 32,
+                            "played_at": "2026-08-01T20:00:00+00:00",
+                            "epoch": epoch,
+                            "ruleset": 0,
+                            "mods": 0,
+                            "objects": 120,
+                            "misses": 0,
+                            "accuracy": 1.0,
+                            "observed_at": "2026-08-01T21:00:00+00:00",
+                        }
+                    )
+                    + "\n"
+                )
+
+        _, out, _ = _run(
+            self._argv(config_path, folders, "--json", "--journal", str(journal)), capsys
+        )
+        payload = json.loads(out)
+        assert payload["gathered"] == 9
+        assert payload["epoch"] == "settings new00000"
+        assert len(payload["skipped"]) == 3
+
+        _, pooled, _ = _run(
+            self._argv(config_path, folders, "--json", "--journal", str(journal), "--all-epochs"),
+            capsys,
+        )
+        assert json.loads(pooled)["gathered"] == 12
+
+    def test_local_offsets_are_reported_as_unknown_rather_than_zero(
+        self, config_path: Path, folders: tuple[Path, Path], capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        # There is no osu!.db in the sandbox, and "every map has no offset" is a
+        # claim the tool has not earned by failing to read one.
+        _, out, _ = _run(self._argv(config_path, folders, "--json"), capsys)
+        assert json.loads(out)["local_offsets_known"] is False
 
 
 class TestParser:

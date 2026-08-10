@@ -94,6 +94,17 @@ class Entry:
     accuracy: float
     breaks: int
 
+    local_offset: int = 0
+    """The beatmap's own offset, from `osu!.db`, in milliseconds.
+
+    Carried rather than ignored because it decides whether this replay's hit
+    errors are on the same scale as everyone else's — a map the player has
+    nudged in game is judged on a shifted clock. The inclusion policy in
+    :func:`osuforge.analysis.clustering.select` excludes those replays; zero is
+    the default because zero is what a reader that could not open `osu!.db`
+    reports, and assuming no offset is the direction that invents no correction.
+    """
+
     @property
     def sample(self) -> ReplaySample:
         return ReplaySample(
@@ -101,6 +112,7 @@ class Entry:
             session=self.session,
             errors=self.errors,
             miss_rate=self.miss_rate,
+            local_offset=self.local_offset,
         )
 
 
