@@ -14,9 +14,14 @@ import typing
 from datetime import UTC, datetime, timedelta
 
 import numpy as np
+import pytest
 
+from osuforge.analysis.verification import UNRECORDED_CHANGE
+from osuforge.collect.epoch import ConfigEpoch
 from osuforge.replay.validate import Agreement
 from osuforge.server.corpus import CorpusState
+
+from .test_collect import config
 
 START = datetime(2026, 8, 1, 19, 0, tzinfo=UTC)
 
@@ -55,6 +60,54 @@ def feed(
                 fractional_windows=False,
                 arrival=None if dwell is None else [(error, dwell) for error in errors],
                 epoch=epoch,
+            )
+
+
+BEFORE = [2, 6, 10, 7, 5]
+"""Per-object error under the old settings: +6 ms on average."""
+
+
+def two_eras(
+    state: CorpusState,
+    *,
+    after: list[int],
+    before_epoch: str,
+    after_epoch: str,
+    before_evenings: int = 3,
+) -> None:
+    """Two plays an evening, three evenings each side of a recorded change.
+
+    The recipe `forge diagnose`'s verification tests use, fed straight in
+    rather than written out as replay files. Every evening carries its own
+    millisecond of drift, -1, 0 and +1 within each side, so the side means stay
+    exactly where they were written while the evenings still differ from one
+    another — a corpus whose sessions share one mean has no between-session
+    variance for the clustered estimators to find.
+
+    Three evenings a side rather than two, because the interval on the
+    difference is the wider of a bootstrap and a Welch-corrected cluster route,
+    and two sessions a side buy the cluster route a t of 4.3 — wide enough to
+    swallow the 5 ms move these tests are about. `before_evenings` shortens the
+    older side, which is how a boundary the verdict has to refuse is built.
+    """
+    for evening in range(before_evenings + 3):
+        old = evening < before_evenings
+        pattern = BEFORE if old else after
+        drift = (evening % 3) - 1
+        for index in range(2):
+            state.add(
+                f"e{evening}r{index}.osr",
+                beatmap_hash="map-a",
+                beatmap="Artist - Title [map-a]",
+                played_at=START + timedelta(days=evening, minutes=20 * index),
+                errors=[float(pattern[hit % len(pattern)] + drift) for hit in range(120)],
+                miss_rate=0.0,
+                accuracy=1.0,
+                breaks=0,
+                agreement=Agreement.EXACT,
+                agreement_reason="all judgements reproduce",
+                fractional_windows=False,
+                epoch=before_epoch if old else after_epoch,
             )
 
 
@@ -219,6 +272,95 @@ class TestEpochs:
         feed(state, sessions=4, epoch="aaaa000000000000", mean=8.0)
         feed(state, sessions=4, first_session=4, epoch="bbbb111111111111", mean=1.0, seed=9)
         json.dumps(state.recompute(), allow_nan=False)
+
+
+class TestVerification:
+    """The verdict `forge diagnose --all-epochs` prints, on the panel serving
+    the same corpus.
+
+    A progress split describes what happened either side of a change. Only the
+    verdict can come out wrong, and a screen that shows the split without it is
+    a screen where a recommendation cannot fail.
+    """
+
+    def recorded(self) -> tuple[ConfigEpoch, ConfigEpoch]:
+        """Two eras on record: offset 0, then offset +5."""
+        return ConfigEpoch.of(config(Offset="0")), ConfigEpoch.of(config(Offset="5"))
+
+    def scored(self, after: list[int], *, snapshots: bool = True) -> dict:
+        old, new = self.recorded()
+        settings = {old.digest: old.settings, new.digest: new.settings} if snapshots else {}
+        state = CorpusState(epoch_settings=settings)
+        two_eras(state, after=after, before_epoch=old.digest, after_epoch=new.digest)
+        answer = state.recompute()
+        # allow_nan off is the whole point of the guard on every number: the
+        # comparison leaves them all NaN when it refuses.
+        json.dumps(answer, allow_nan=False)
+        return answer["progress"]["verification"]
+
+    def test_the_predicted_move_reaches_the_panel(self) -> None:
+        # Offset raised by 5, and the mean fell by 5 — which is what raising it
+        # is supposed to do, since the game then judges objects later.
+        verified = self.scored([-3, 1, 5, 2, 0])
+        assert verified["verdict"] == "confirmed"
+        assert verified["predicted"] == pytest.approx(-5.0)
+        assert verified["difference"] == pytest.approx(-5.0, abs=0.5)
+        assert verified["ci_high"] < 0.0
+
+    def test_the_wrong_way_is_contradicted_here_too(self) -> None:
+        # The case this exists for, and the one a progress split alone stays
+        # silent about: the same recorded change, the mean went the other way.
+        verified = self.scored([7, 11, 15, 12, 10])
+        assert verified["verdict"] == "contradicted"
+        assert verified["difference"] == pytest.approx(5.0, abs=0.5)
+        assert "put it back" in verified["reason"]
+
+    def test_a_thin_side_refuses_with_a_sentence_and_no_numbers(self) -> None:
+        old, new = self.recorded()
+        state = CorpusState(epoch_settings={old.digest: old.settings, new.digest: new.settings})
+        two_eras(
+            state,
+            after=[-3, 1, 5, 2, 0],
+            before_epoch=old.digest,
+            after_epoch=new.digest,
+            before_evenings=1,
+        )
+        answer = state.recompute()
+        json.dumps(answer, allow_nan=False)
+        verified = answer["progress"]["verification"]
+        assert verified["verdict"] == "insufficient"
+        assert all(
+            verified[field] is None
+            for field in (
+                "before_mean",
+                "after_mean",
+                "difference",
+                "ci_low",
+                "ci_high",
+                "predicted",
+            )
+        )
+        assert "comparing needs" in verified["reason"]
+
+    def test_a_journal_from_before_snapshots_says_what_it_cannot_know(self) -> None:
+        # The fingerprints differ, so something changed; without the values
+        # behind them there is no way to say it was the offset. Reporting "no
+        # offset change here" would be a claim the record does not support —
+        # and the panel says it in the command's words, not a second set.
+        verified = self.scored([-3, 1, 5, 2, 0], snapshots=False)
+        assert verified["predicted"] is None
+        assert verified["verdict"] != "confirmed"
+        assert verified["reason"] == UNRECORDED_CHANGE
+
+    def test_a_midpoint_split_predicts_nothing_and_is_not_scored(self) -> None:
+        # The default state of a first-run corpus. The middle of the sessions
+        # is a description of time; scoring it against a prediction nobody made
+        # is how a statistics screen starts agreeing with itself.
+        state = CorpusState()
+        feed(state, sessions=4)
+        found = state.recompute()["progress"]
+        assert found["boundary"]["kind"] == "midpoint"
+        assert found["verification"] is None
 
 
 class TestLocalOffsets:

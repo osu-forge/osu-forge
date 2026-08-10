@@ -26,7 +26,10 @@ says.
   the same refusal to pool across a change that `forge diagnose` makes. The
   older plays are not discarded: they become the before side of the progress
   view, where the two eras are estimated separately and only the difference
-  crosses the boundary.
+  crosses the boundary. Where the journal also recorded what the change was,
+  that difference is scored against what the change predicted, so this panel
+  carries the same contradicted verdict `forge diagnose` would print rather
+  than a progress split that cannot come out wrong.
 
 - **Local offsets.** Read once from `osu!.db` at startup and looked up per
   beatmap while the entries are built, rather than remembered with each play:
@@ -65,6 +68,7 @@ from osuforge.analysis.clustering import assign_sessions
 from osuforge.analysis.corpus import Entry, beatmap_reading, by_beatmap, diagnose
 from osuforge.analysis.gather import arrival_pairs
 from osuforge.analysis.progress import fill_epochs, progress
+from osuforge.analysis.verification import verify_boundary
 from osuforge.replay.source import Judged
 from osuforge.replay.validate import Agreement, CorpusHealth
 from osuforge.server.protocol import corpus_payload
@@ -156,11 +160,25 @@ class CorpusState:
     names, so state arriving after a payload has been computed would never
     invalidate it. `None` means the file could not be read and zero is assumed,
     which is not the same claim as an empty dictionary's "read, and all zero".
+
+    `epoch_settings` is the collect journal's fingerprint-to-settings map, as
+    :meth:`osuforge.collect.journal.Journal.epoch_settings` returns it, and it
+    is fixed for the same reason: a snapshot appended after startup does not
+    change the set of play names, so it would never invalidate a computed
+    payload anyway. A fingerprint missing from it was recorded before snapshots
+    existed, and what it changed cannot be named.
     """
 
-    def __init__(self, *, seed: int = 0, offsets: dict[str, int] | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        seed: int = 0,
+        offsets: dict[str, int] | None = None,
+        epoch_settings: dict[str, dict[str, str]] | None = None,
+    ) -> None:
         self._seed = seed
         self._offsets = offsets
+        self._epoch_settings = epoch_settings or {}
         self._facts: dict[str, _Facts] = {}
         self._lock = threading.Lock()
         self._computed_for: frozenset[str] | None = None
@@ -313,6 +331,17 @@ class CorpusState:
             else:
                 present.append(entry)
 
+        # Over everything believed, deliberately across epochs: the boundary is
+        # the point of the view, and the sides are estimated separately rather
+        # than pooled.
+        across = progress(ordered, epochs=recorded, seed=self._seed)
+        # A recommendation that is never checked against what happened next is
+        # a recommendation that cannot be wrong. Scored here from the same
+        # entries the split was drawn from, by the code `forge diagnose` calls,
+        # so the panel and the command cannot reach different verdicts about
+        # one journal. `None` on a midpoint boundary, which predicts nothing.
+        verification = verify_boundary(ordered, across, self._epoch_settings, seed=self._seed)
+
         diagnosis = diagnose(present, seed=self._seed)
         per_beatmap = by_beatmap(present)
         health = CorpusHealth(
@@ -331,8 +360,6 @@ class CorpusState:
             unreproduced={**unreproduced, **out_of_epoch},
             local_offsets_known=self._offsets is not None,
             reading=beatmap_reading(diagnosis.bias, per_beatmap),
-            # Over everything believed, deliberately across epochs: the
-            # boundary is the point of the view, and the sides are estimated
-            # separately rather than pooled.
-            progress=progress(ordered, epochs=recorded, seed=self._seed),
+            progress=across,
+            verification=verification,
         )

@@ -19,7 +19,7 @@ import sys
 import time
 from collections.abc import Mapping, Sequence
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, TextIO
+from typing import Any, TextIO
 
 from osuforge import __version__, hardware
 from osuforge.collect.epoch import ConfigEpoch
@@ -35,14 +35,6 @@ from osuforge.rules.engine import Rule
 from osuforge.server.security import DEFAULT_PORT
 from osuforge.store import StoreError, default_db_path, open_store
 from osuforge.store import profile as store_profile
-
-if TYPE_CHECKING:
-    # Type-only. Analysis pulls numpy and scipy in, so the commands that need it
-    # import it inside the function that runs it and `forge doctor` does not pay
-    # for statistics it never uses.
-    from osuforge.analysis.corpus import Entry as CorpusEntry
-    from osuforge.analysis.progress import Progress
-    from osuforge.analysis.verify import Comparison
 
 __all__ = ["main"]
 
@@ -363,95 +355,14 @@ def _epoch_filter(
     return kept, f"settings {current}", dropped
 
 
-_UNRECORDED_CHANGE = (
-    "What this boundary changed was not recorded: the journal predates settings "
-    "snapshots, so the two fingerprints differ but the values behind them are gone. "
-    "Read the line above as no prediction to check rather than as the offset having "
-    "stayed where it was. Boundaries from here on carry their settings with them."
-)
-
-
-def _verify_boundary(
-    entries: list[CorpusEntry], across: Progress, journal: Journal
-) -> tuple[Comparison, str | None] | None:
-    """Score a recorded settings change against the prediction it made.
-
-    Returns the comparison and, when the settings behind either fingerprint
-    were never written down, the sentence that says so. `None` when the split
-    is not a settings change at all: the middle of the sessions is a
-    description of time and predicts nothing about the mean.
-    """
-    from osuforge.analysis.verify import Boundary, compare
-
-    if across.boundary_at is None or across.before_epoch is None or across.after_epoch is None:
-        return None
-
-    snapshots = journal.epoch_settings()
-    before_settings = snapshots.get(across.before_epoch)
-    after_settings = snapshots.get(across.after_epoch)
-
-    changed: dict[str, tuple[str, str]] = {}
-    unrecorded: str | None = _UNRECORDED_CHANGE
-    if before_settings is not None and after_settings is not None:
-        unrecorded = None
-        # Reconstructed epochs rather than a second diff, so that "a setting
-        # appearing for the first time counts as a change" cannot drift
-        # between here and the fingerprint it came from.
-        changed = ConfigEpoch(digest=across.after_epoch, settings=after_settings).differences(
-            ConfigEpoch(digest=across.before_epoch, settings=before_settings)
-        )
-
-    comparison = compare(
-        Boundary(
-            before_epoch=across.before_epoch,
-            after_epoch=across.after_epoch,
-            before=[entry.sample for entry in entries if entry.played_at < across.boundary_at],
-            after=[entry.sample for entry in entries if entry.played_at >= across.boundary_at],
-            changed=changed,
-        ),
-        seed=0,
-    )
-    return comparison, unrecorded
-
-
-def _verification_json(
-    verification: tuple[Comparison, str | None] | None,
-) -> dict[str, Any] | None:
-    from osuforge.analysis.verify import Verdict
-
-    if verification is None:
-        return None
-    comparison, unrecorded = verification
-
-    reason = comparison.reason
-    if unrecorded is not None:
-        # Replaced rather than appended where the module made no prediction: it
-        # reads an empty diff as "changed something other than the offset",
-        # which is a claim about settings nobody wrote down. A refusal for
-        # thinness is about the replays instead and stands on its own.
-        reason = (
-            f"{comparison.reason} {unrecorded}"
-            if comparison.verdict is Verdict.INSUFFICIENT
-            else unrecorded
-        )
-
-    return {
-        "verdict": str(comparison.verdict),
-        "before_mean": _finite(comparison.before_mean),
-        "after_mean": _finite(comparison.after_mean),
-        "difference": _finite(comparison.difference),
-        "ci_low": _finite(comparison.ci_low),
-        "ci_high": _finite(comparison.ci_high),
-        "predicted": None if comparison.predicted is None else _finite(comparison.predicted),
-        "reason": reason,
-    }
-
-
 def _diagnose(args: argparse.Namespace) -> int:
     """What the corpus supports, rather than what one play happened to do."""
+    # Imported here rather than at module scope: analysis pulls numpy and scipy
+    # in, and `forge doctor` does not pay for statistics it never runs.
     from osuforge.analysis.corpus import by_beatmap, diagnose
     from osuforge.analysis.gather import gather
     from osuforge.analysis.progress import progress
+    from osuforge.analysis.verification import verification_json, verify_boundary
     from osuforge.sources import osudb
 
     try:
@@ -499,7 +410,7 @@ def _diagnose(args: argparse.Namespace) -> int:
         # Only a settings change makes a prediction, and only this run has both
         # eras in front of it. A recommendation that is never checked against
         # what happened next is a recommendation that cannot be wrong.
-        verification = _verify_boundary(collected.entries, across, journal)
+        verification = verify_boundary(collected.entries, across, journal.epoch_settings())
 
     if args.json:
         print(
@@ -586,7 +497,7 @@ def _diagnose(args: argparse.Namespace) -> int:
                             ),
                         }
                     ),
-                    "verification": _verification_json(verification),
+                    "verification": verification_json(verification),
                 },
                 indent=2,
             )
@@ -778,23 +689,24 @@ def _serve(args: argparse.Namespace) -> int:
     verified, offsets_finding = osudb.load(path=args.db or install / "osu!.db", songs=songs_dir)
     offsets = verified.offsets if verified is not None and verified.trustworthy else None
 
+    # Best effort, never fatal: the journal is what knows when settings
+    # changed. Without one the verdict pools everything it believes, the
+    # progress view falls back to splitting on time, and no change can be
+    # scored against what it predicted — a weaker answer than with the record,
+    # not a reason to refuse to serve. Both reads share the guard: a file that
+    # cannot be read costs the split and the verdict together.
+    journal = Journal(args.journal or default_journal_path())
+    try:
+        journal_epochs = {entry.replay: entry.epoch for entry in journal.entries()}
+        epoch_settings = journal.epoch_settings()
+    except OSError:
+        journal_epochs, epoch_settings = {}, {}
+
     index = BeatmapIndex(songs_dir)
     payloads: dict[str, Any] = {}
     skipped: dict[str, int] = {}
-    corpus = CorpusState(offsets=offsets)
+    corpus = CorpusState(offsets=offsets, epoch_settings=epoch_settings)
     cache = AnalysisCache(args.cache)
-
-    # Best effort, never fatal: the journal is what knows when settings
-    # changed. Without one the verdict pools everything it believes and the
-    # progress view falls back to splitting on time — a weaker answer than
-    # with the record, not a reason to refuse to serve.
-    try:
-        journal_epochs = {
-            entry.replay: entry.epoch
-            for entry in Journal(args.journal or default_journal_path()).entries()
-        }
-    except OSError:
-        journal_epochs = {}
 
     def note(reason: str) -> None:
         skipped[reason] = skipped.get(reason, 0) + 1

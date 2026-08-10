@@ -113,6 +113,8 @@ const en = {
   "corpus.shifts": "shifts on its own",
   "corpus.thinMaps": "{n} more map(s) played too little to report alone.",
   "corpus.excluded": "{n} play(s) not in this answer",
+  "corpus.verification": "Did it do what it predicted",
+  "corpus.predictedObserved": "predicted {p} ms · observed {o} ms",
 
   "progress.heading": "Did it change",
   "progress.chartLabel":
@@ -239,6 +241,8 @@ const ko: Record<Key, string> = {
   "corpus.shifts": "단독으로도 치우침",
   "corpus.thinMaps": "{n}개 맵은 플레이가 적어 따로 보고하지 않습니다.",
   "corpus.excluded": "이 답에 없는 플레이 {n}개",
+  "corpus.verification": "예측대로 됐나",
+  "corpus.predictedObserved": "예측 {p} ms · 실제 {o} ms",
 
   "progress.heading": "바뀌었나",
   "progress.chartLabel": "세션별 평균 히트 오차와 경계 전후의 신뢰구간",

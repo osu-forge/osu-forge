@@ -221,6 +221,24 @@ export interface ProgressShift {
   verdict: string;
 }
 
+export interface CorpusVerification {
+  /** `confirmed`, `partial`, `contradicted`, `unchanged` or `insufficient`.
+   *  The server's own word, rendered as it arrives. */
+  verdict: string;
+  before_mean: number | null;
+  after_mean: number | null;
+  difference: number | null;
+  /** The interval on the difference. Carried for a JSON reader; the panel
+   *  deliberately does not print it — see the note in `Corpus.tsx`. */
+  ci_low: number | null;
+  ci_high: number | null;
+  /** How far the mean was predicted to move. `null` when the boundary changed
+   *  something other than the offset, or when what it changed was never
+   *  written down: it made no prediction and must not be scored as if it had. */
+  predicted: number | null;
+  reason: string;
+}
+
 export interface CorpusProgress {
   points: ProgressPoint[];
   /** `settings` when the collect journal recorded a change; `midpoint` when
@@ -228,6 +246,9 @@ export interface CorpusProgress {
   boundary: { kind: string; at: string; label: string } | null;
   shift: ProgressShift | null;
   insufficient: string | null;
+  /** Whether the change did what it predicted. `null` on a midpoint split,
+   *  which is a description of time and predicts nothing. */
+  verification: CorpusVerification | null;
 }
 
 export interface Corpus {
