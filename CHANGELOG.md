@@ -258,6 +258,18 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   progress block, and carries it in `--json`.
 
 ### Changed
+- Verification puts the same interval on the difference that the progress panel
+  does — the wider of a Welch-corrected cluster route and the hierarchical
+  bootstrap — where it used to report the bootstrap alone. On one corpus the two
+  blocks printed "no detectable change, the interval on the difference includes
+  zero (-11.1 to +1.1 ms)" and "confirmed (95% CI -7.03 to -2.96)" three lines
+  apart, each internally correct and disagreeing about the same difference. A
+  verdict that survives the wider interval is worth acting on and one that only
+  survives the narrower is not, so expect a boundary with two sessions a side to
+  read UNCHANGED where it used to read CONFIRMED, until there are more evenings
+  behind it. The Welch construction now lives in one place,
+  `analysis.clustering.welch_difference_ci`, because two constructions of one
+  quantity are two numbers free to disagree about it.
 - `forge serve` reads `osu!.db` for per-beatmap local offsets, with a `--db`
   flag mirroring `forge diagnose`'s. Until now the served corpus assumed every
   map sat at zero, so replays of a map the player had nudged in game were
@@ -293,6 +305,11 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   interpreter down with no traceback. The engine still gets the smaller binary.
 
 ### Fixed
+- The cluster route divided by zero when both sides of a boundary had sessions
+  whose means all landed on the side mean exactly. Rare, but it cost the whole
+  comparison rather than the one route, and the corpus that triggers it is
+  merely unusually tidy. The route now reports itself as not holding and the
+  bootstrap answers alone.
 - `osuforge` shipped without a `py.typed` marker, so every consumer saw it as
   untyped however strictly it checks itself.
 - The Python license gate reported success when `pip-licenses` had failed and

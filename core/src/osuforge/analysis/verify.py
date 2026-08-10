@@ -32,6 +32,23 @@ with another evening. Whatever differs between them — warm-up, time of day,
 which maps were in the mood — is confounded with the change. Requiring sessions
 on both sides does not remove that, but it stops the comparison being made
 entirely out of it.
+
+# Two routes to the interval, and the wider one decides
+
+Same posture as :func:`osuforge.analysis.clustering.estimate` and
+:mod:`osuforge.analysis.progress`, and here it is not only for the usual
+reason. The interval on `after - before` comes from a Welch-corrected cluster
+route with sessions as the unit and from a hierarchical bootstrap over
+sessions, replays and hits; the wider of the two is what gets reported and
+what :attr:`Comparison.measurable` reads.
+
+Progress describes the same difference across the same boundary, on the same
+screen, and has always reported the wider of these two routes. A verdict built
+on the narrower one would let this tool print "no detectable change" and
+"confirmed" about one corpus three lines apart, which is the failure this
+module exists to prevent rather than a rounding difference. A verdict that
+survives the wider interval is worth acting on; one that only survives the
+narrower is not worth printing.
 """
 
 from __future__ import annotations
@@ -42,7 +59,7 @@ from enum import StrEnum
 
 import numpy as np
 
-from osuforge.analysis.clustering import ReplaySample, select
+from osuforge.analysis.clustering import ReplaySample, select, welch_difference_ci
 
 __all__ = [
     "AGREEMENT_TOLERANCE",
@@ -161,19 +178,14 @@ class Comparison:
         return f"{moved}, against {self.predicted:+.2f} ms predicted. {self.reason}"
 
 
-def _difference_ci(
+def _bootstrap_difference_ci(
     before: list[ReplaySample],
     after: list[ReplaySample],
     *,
     seed: int,
     resamples: int,
 ) -> tuple[float, float]:
-    """Interval on the difference, resampling sessions then replays then hits.
-
-    On the difference rather than on each side separately: two intervals that
-    overlap can still have a difference that excludes zero, and reading
-    overlap as "no change" is a standard way to miss a real one.
-    """
+    """The bootstrap route: resample sessions, then replays, then hits."""
 
     def group(samples: list[ReplaySample]) -> list[list[np.ndarray]]:
         buckets: dict[int, list[np.ndarray]] = {}
@@ -203,6 +215,36 @@ def _difference_ci(
     tail = (1.0 - _CONFIDENCE) / 2.0
     low, high = np.quantile(differences, [tail, 1.0 - tail])
     return (float(low), float(high))
+
+
+def _difference_ci(
+    before: list[ReplaySample],
+    after: list[ReplaySample],
+    *,
+    seed: int,
+    resamples: int,
+) -> tuple[float, float]:
+    """The wider of the two routes to an interval on `after - before`.
+
+    On the difference rather than on each side separately: two intervals that
+    overlap can still have a difference that excludes zero, and reading
+    overlap as "no change" is a standard way to miss a real one.
+
+    Wider of the two rather than either alone, for the reason in the module
+    docstring. `(nan, nan)` only when neither route holds, which leaves the
+    comparison unmeasurable and is the honest outcome of not being able to put
+    an interval on the difference at all.
+    """
+    routes = (
+        welch_difference_ci(before, after, confidence=_CONFIDENCE),
+        _bootstrap_difference_ci(before, after, seed=seed, resamples=resamples),
+    )
+    usable = [
+        interval for interval in routes if math.isfinite(interval[0]) and math.isfinite(interval[1])
+    ]
+    if not usable:
+        return (math.nan, math.nan)
+    return max(usable, key=lambda interval: interval[1] - interval[0])
 
 
 def compare(

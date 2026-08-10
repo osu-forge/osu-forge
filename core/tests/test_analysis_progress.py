@@ -55,6 +55,37 @@ def block(
     return built
 
 
+def flat_block(
+    *,
+    error: float,
+    sessions: int,
+    first_session: int = 0,
+    replays: int = 3,
+    hits: int = 150,
+) -> list[Entry]:
+    """Every hit the same millisecond, so every session mean is bit-identical.
+
+    Nobody plays this. It is the corpus that leaves the cluster route with no
+    session-level variance at all on either side, which divides by zero rather
+    than producing a wide interval unless the route refuses first.
+    """
+    return [
+        Entry(
+            replay=f"flat-s{first_session + offset}r{index}.osr",
+            beatmap_hash="map-a",
+            beatmap="Artist - Title [map-a]",
+            played_at=START + timedelta(days=first_session + offset, minutes=5 * index),
+            session=first_session + offset,
+            errors=[error] * hits,
+            miss_rate=0.02,
+            accuracy=0.97,
+            breaks=1,
+        )
+        for offset in range(sessions)
+        for index in range(replays)
+    ]
+
+
 def epochs_for(entries: list[Entry], digest: str) -> dict[str, str]:
     return {entry.replay: digest for entry in entries}
 
@@ -143,6 +174,21 @@ class TestFallbackAndRefusal:
         assert result.insufficient is not None
         assert "after side" in result.insufficient
         assert "session" in result.insufficient
+
+    def test_identical_session_means_leave_the_other_route_to_answer(self) -> None:
+        # Both sides carrying zero session-level variance puts a zero in the
+        # Welch denominator. Reported as a route that does not hold, so the
+        # bootstrap answers alone. A crash here would cost the whole comparison
+        # to a corpus that is merely unusually tidy.
+        before = flat_block(error=6.0, sessions=3)
+        after = flat_block(error=1.0, sessions=3, first_session=3)
+        epochs = epochs_for(before, "aaaa000000000000") | epochs_for(after, "bbbb111111111111")
+
+        result = progress(before + after, epochs=epochs, resamples=RESAMPLES)
+        assert result.shift is not None
+        assert result.shift.ci_source == "bootstrap"
+        assert result.shift.difference == -5.0
+        assert result.shift.moved
 
     def test_an_empty_corpus_is_a_sentence_not_a_crash(self) -> None:
         result = progress([])

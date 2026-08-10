@@ -64,6 +64,7 @@ __all__ = [
     "assign_sessions",
     "estimate",
     "select",
+    "welch_difference_ci",
 ]
 
 MIN_HITS_PER_REPLAY = 100
@@ -333,6 +334,68 @@ def _cluster_se(values: np.ndarray, clusters: np.ndarray, mean: float) -> float:
     totals = np.array([float((values[clusters == c] - mean).sum()) for c in unique])
     correction = g / (g - 1)
     return math.sqrt(correction * float((totals**2).sum())) / n
+
+
+def _side_moments(samples: list[ReplaySample]) -> tuple[float, float, int]:
+    """One side's mean, its session-clustered standard error, and its sessions.
+
+    The standard error comes back `nan` below two sessions, which is where a
+    clustered standard error stops existing at all.
+    """
+    usable = [s for s in samples if s.n > 0]
+    if not usable:
+        return (math.nan, math.nan, 0)
+    values = np.concatenate([np.asarray(s.errors, dtype=float) for s in usable])
+    clusters = np.concatenate([np.full(s.n, s.session) for s in usable])
+    mean = float(values.mean())
+    return (mean, _cluster_se(values, clusters, mean), int(np.unique(clusters).size))
+
+
+def welch_difference_ci(
+    before: list[ReplaySample],
+    after: list[ReplaySample],
+    *,
+    confidence: float = _CONFIDENCE,
+) -> tuple[float, float]:
+    """The cluster route to an interval on `after - before`.
+
+    The two sides are disjoint sets of sessions, so their errors are
+    independent and the variances add. Degrees of freedom by
+    Welch-Satterthwaite on the session counts, which with two or three sessions
+    a side is the difference between a t of 2.8 and a normal's 1.96, and that
+    is not a refinement.
+
+    Shared rather than written once per caller. Every module that compares two
+    sides of a boundary reports an interval on this same difference, and two
+    constructions of one quantity are two numbers free to disagree about it on
+    the same screen.
+
+    `(nan, nan)` when the route does not hold, which callers read as "use the
+    other one". Two ways for it not to hold: fewer than two sessions on a side
+    leaves no clustered standard error to start from, and session means that
+    all sit exactly on their own side's mean leave the Welch denominator at
+    zero. An interval of width zero read off the second case would describe
+    the arithmetic rather than the player.
+    """
+    mean_before, se_before, sessions_before = _side_moments(before)
+    mean_after, se_after, sessions_after = _side_moments(after)
+    if not (math.isfinite(se_before) and math.isfinite(se_after)):
+        return (math.nan, math.nan)
+
+    variance_before, variance_after = se_before**2, se_after**2
+    # A finite clustered standard error already means two sessions or more, so
+    # both degrees of freedom below are at least one.
+    denominator = variance_before**2 / (sessions_before - 1) + variance_after**2 / (
+        sessions_after - 1
+    )
+    if denominator <= 0.0:
+        return (math.nan, math.nan)
+
+    welch = (variance_before + variance_after) ** 2 / denominator
+    critical = float(stats.t.ppf(1.0 - (1.0 - confidence) / 2.0, welch))
+    half = critical * math.sqrt(variance_before + variance_after)
+    difference = mean_after - mean_before
+    return (difference - half, difference + half)
 
 
 def _hierarchical_bootstrap(
