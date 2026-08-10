@@ -53,7 +53,14 @@ const PATH_SPACING: f64 = 5.0;
 // `__hash__` to None, so these become unusable as dict keys or set members —
 // which is exactly what a caller reaches for when mapping a kind to a label.
 // The failure arrives as a TypeError at the use site rather than here.
-#[pyclass(eq, eq_int, hash, frozen, skip_from_py_object, module = "osu_forge_diffcalc")]
+#[pyclass(
+    eq,
+    eq_int,
+    hash,
+    frozen,
+    skip_from_py_object,
+    module = "osu_forge_diffcalc"
+)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ObjectKind {
     Circle,
@@ -66,7 +73,14 @@ pub enum ObjectKind {
 // `__hash__` to None, so these become unusable as dict keys or set members —
 // which is exactly what a caller reaches for when mapping a kind to a label.
 // The failure arrives as a TypeError at the use site rather than here.
-#[pyclass(eq, eq_int, hash, frozen, skip_from_py_object, module = "osu_forge_diffcalc")]
+#[pyclass(
+    eq,
+    eq_int,
+    hash,
+    frozen,
+    skip_from_py_object,
+    module = "osu_forge_diffcalc"
+)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum PartKind {
     Tick,
