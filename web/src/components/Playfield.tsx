@@ -28,13 +28,28 @@ export interface PlayfieldProps {
   clock: number;
   /** How many cursor samples of trail to draw behind the clock. */
   trail?: number;
+  /** Render Hidden the way the player saw it: no approach rings, objects
+   *  fading in over the first 40% of the preempt and out over the next 30%,
+   *  slider bodies thinning across their own duration. Off shows everything —
+   *  the analysis view of the same play. */
+  hidden?: boolean;
 }
 
 const FIELD_WIDTH = 512;
 const FIELD_HEIGHT = 384;
 
-/** Approach ring starts at this multiple of the object radius, as osu! does. */
-const APPROACH_SCALE = 2.4;
+/** The approach ring starts at four times the object radius and shrinks to
+ *  one — `1 + APPROACH_SCALE` at full preempt. The initial scale of 4 is the
+ *  game's own (`ApproachCircle` in ppy/osu is scaled from 4 to 1 across the
+ *  preempt); the previous 2.4 here made every ring read as more imminent
+ *  than it was. */
+const APPROACH_SCALE = 3;
+
+/** Hidden's fade shares, as fractions of the preempt: in over the first 40%,
+ *  gone over the next 30%. The numbers are the game's, and they are why a
+ *  Hidden player reads rhythm from memory past the first bars. */
+const HIDDEN_FADE_IN = 0.4;
+const HIDDEN_FADE_OUT = 0.3;
 
 /** The follow area is this multiple of the object radius while tracking.
  *  `DrawableSliderBall.FOLLOW_AREA` in ppy/osu — read from the source rather
@@ -104,7 +119,7 @@ function tone(colour: Colour, alpha: number): string {
   return `rgba(${Math.round(r * 255)}, ${Math.round(g * 255)}, ${Math.round(b * 255)}, ${a * alpha})`;
 }
 
-export function Playfield({ header, samples, paths, clock, trail = 48 }: PlayfieldProps) {
+export function Playfield({ header, samples, paths, clock, trail = 48, hidden = false }: PlayfieldProps) {
   const canvas = useRef<HTMLCanvasElement>(null);
   const overlay = useRef<HTMLCanvasElement>(null);
   const renderer = useRef<PlayfieldRenderer | null>(null);
@@ -178,12 +193,39 @@ export function Playfield({ header, samples, paths, clock, trail = 48 }: Playfie
     const ribbons: Ribbon[] = [];
     const discs: Disc[] = [];
 
+    const dim = (colour: Colour, alpha: number): Colour => [
+      colour[0],
+      colour[1],
+      colour[2],
+      colour[3] * alpha,
+    ];
+
+    /** How visible this object is right now under Hidden, 1 without it. */
+    const hdAlpha = (object: HitObject): number => {
+      if (!hidden || object.kind === "spinner") return 1;
+      const appear = object.t - preempt;
+      const fadeIn = preempt * HIDDEN_FADE_IN;
+      if (clock < appear) return 0;
+      if (clock < appear + fadeIn) return (clock - appear) / fadeIn;
+      if (object.kind === "slider") {
+        // The body thins across its own duration, so the tail is played from
+        // memory of the shape rather than sight of it — as the mod plays.
+        if (clock < object.t) return 1;
+        const span = Math.max(1, object.end - object.t);
+        return Math.max(0, 1 - (clock - object.t) / span);
+      }
+      const fadeOut = preempt * HIDDEN_FADE_OUT;
+      if (clock < appear + fadeIn + fadeOut) return 1 - (clock - (appear + fadeIn)) / fadeOut;
+      return 0;
+    };
+
     for (let i = 0; i < header.objects.length; i++) {
       const object = header.objects[i]!;
       if (clock < object.t - preempt || clock > object.end + LINGER) continue;
       const grade = header.judgements[i]?.grade ?? 3;
       const colour = palette.judged[Math.min(3, Math.max(0, grade))]!;
       const active = clock >= object.t && clock <= object.end;
+      const visible = hdAlpha(object);
 
       if (object.kind === "spinner") {
         // Was missing entirely. The outer ring shrinking toward the centre is
@@ -204,7 +246,9 @@ export function Playfield({ header, samples, paths, clock, trail = 48 }: Playfie
 
       if (object.kind === "slider" && object.p && object.p[1] > 0) {
         const [offset, count] = object.p;
-        ribbons.push({ points: paths, offset, count, colour: palette.body });
+        if (visible > 0.02) {
+          ribbons.push({ points: paths, offset, count, colour: dim(palette.body, visible) });
+        }
 
         const slides = object.slides ?? 1;
         const ball = ballAt(object, clock);
@@ -212,7 +256,7 @@ export function Playfield({ header, samples, paths, clock, trail = 48 }: Playfie
         // The repeat arrow, at whichever end the ball turns around next. A
         // repeat slider with no arrow gives no warning that it is about to
         // reverse, which is exactly when one gets dropped.
-        if (slides > 1 && clock < object.end) {
+        if (slides > 1 && clock < object.end && visible > 0.02) {
           const turningAtFar = ball ? !ball.reversed : true;
           const [ax, ay] = pathPoint(paths, offset, count, turningAtFar ? 1 : 0);
           discs.push({
@@ -220,7 +264,7 @@ export function Playfield({ header, samples, paths, clock, trail = 48 }: Playfie
             y: ay,
             radius: radius * 0.42,
             inner: 0.55,
-            colour: palette.approach,
+            colour: dim(palette.approach, visible),
           });
         }
 
@@ -240,9 +284,14 @@ export function Playfield({ header, samples, paths, clock, trail = 48 }: Playfie
       }
 
       // A ring rather than a disc: the object outline, at the object radius.
-      discs.push({ x: object.x, y: object.y, radius, inner: 0.86, colour });
+      if (visible > 0.02) {
+        discs.push({ x: object.x, y: object.y, radius, inner: 0.86, colour: dim(colour, visible) });
+      }
 
-      if (clock < object.t) {
+      // Hidden's defining absence: the mod removes the approach circle
+      // entirely, so drawing one here would show a play easier to read than
+      // the one that was made.
+      if (clock < object.t && !hidden) {
         const remaining = (object.t - clock) / preempt;
         const scale = 1 + APPROACH_SCALE * remaining;
         discs.push({
@@ -368,10 +417,11 @@ export function Playfield({ header, samples, paths, clock, trail = 48 }: Playfie
 
       // The combo number. Not on the wire — it is the count since the last
       // new-combo flag, which the page can derive and the server would only be
-      // duplicating.
+      // duplicating. Under Hidden it fades with its object.
       const number = combo[i];
-      if (number) {
-        ctx.fillStyle = tone(palette!.cursor, 0.92);
+      const visible = hdAlpha(object);
+      if (number && visible > 0.02) {
+        ctx.fillStyle = tone(palette!.cursor, 0.92 * visible);
         ctx.font = `${Math.round(radius * scale * 0.95)}px Inter, system-ui, sans-serif`;
         ctx.fillText(String(number), sx(object.x), sy(object.y));
       }
@@ -397,7 +447,7 @@ export function Playfield({ header, samples, paths, clock, trail = 48 }: Playfie
         );
       }
     }
-  }, [header, samples, paths, clock, trail, palette, combo]);
+  }, [header, samples, paths, clock, trail, palette, combo, hidden]);
 
   if (failure.current) {
     return (

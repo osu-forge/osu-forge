@@ -714,6 +714,7 @@ def _serve(args: argparse.Namespace) -> int:
             rate=judged.replay.rate,
             analysis=None if isinstance(play, str) else analysis_payload(play),
             background=backdrop,
+            mods=int(judged.replay.mods),
         )
 
     # Newest first and capped: every payload stays resident for the life of the

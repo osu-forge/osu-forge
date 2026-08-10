@@ -40,6 +40,7 @@ const en = {
   "player.replay": "Replay",
   "player.break": "break",
   "player.loopClear": "Clear the A–B loop",
+  "player.revealHidden": "reveal HD",
   "player.liveStats": "Running totals at the playhead",
   "player.errorBar": "The last dozen hit errors on the judgement-window scale",
   "player.shortcuts":
@@ -145,6 +146,7 @@ const ko: Record<Key, string> = {
   "player.replay": "처음부터",
   "player.break": "브레이크",
   "player.loopClear": "A–B 구간 해제",
+  "player.revealHidden": "HD 표시 해제",
   "player.liveStats": "재생 지점까지의 누적 수치",
   "player.errorBar": "판정창 눈금 위 최근 12개 히트 오차",
   "player.shortcuts":
