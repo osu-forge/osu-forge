@@ -204,6 +204,26 @@ class TestSliders:
         # than half" — that would move over a thousand objects to 50.
         assert run(ONE_SLIDER, samples).hits[0].grade is Grade.HUNDRED
 
+    def test_the_outcome_of_each_part_is_kept_not_just_the_count(self) -> None:
+        # The count grades the slider; the sequence is what places the break
+        # on the body. First tick held, everything after dropped.
+        parts = self.parts_of()
+        samples = [(1000, 0.0, 0.0, K1), (int(parts[0].time), parts[0].x, parts[0].y, K1)]
+        samples += [(int(part.time), 400.0, 400.0, K1) for part in parts[1:]]
+        hit = run(ONE_SLIDER, samples).hits[0]
+        assert hit.parts_hit == (True, False, False)
+        assert hit.parts_collected == 1 + sum(hit.parts_hit)
+
+    def test_a_circle_carries_no_part_outcomes(self) -> None:
+        result = run(
+            "osu file format v14\n"
+            "[General]\nMode: 0\n"
+            "[Difficulty]\nCircleSize:4\nOverallDifficulty:8\nApproachRate:9\n"
+            "[HitObjects]\n0,0,1000,1,0,0:0:0:0:\n",
+            [(1000, 0.0, 0.0, K1)],
+        )
+        assert result.hits[0].parts_hit is None
+
     def test_a_slider_can_score_without_its_head(self) -> None:
         samples = [(int(part.time), part.x, part.y, K1) for part in self.parts_of()]
         result = run(ONE_SLIDER, samples)

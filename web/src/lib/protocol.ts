@@ -37,6 +37,10 @@ export interface HitObject {
   p?: [number, number];
   /** Traversals of the path. 1 means no repeat. Sliders only. */
   slides?: number;
+  /** Scoring parts as `[time, x, y, kind]` — kind 0 tick, 1 repeat, 2 tail —
+   *  in time order, aligned by index with the judgement's `parts`. Sliders
+   *  only. */
+  parts?: [number, number, number, number][];
 }
 
 export interface Judgement {
@@ -46,6 +50,9 @@ export interface Judgement {
   error: number | null;
   /** Distance from the centre at the press, in radii. `null` for a miss. */
   aim: number | null;
+  /** Whether each scoring part held tracking, 1/0, aligned with the object's
+   *  `parts`. `null` for anything not a slider. */
+  parts: number[] | null;
 }
 
 export interface Finding {

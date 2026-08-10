@@ -225,6 +225,13 @@ class Hit:
     update, so that frame is the game's own view of where the cursor was.
     """
 
+    parts_hit: tuple[bool, ...] | None = None
+    """Whether each scoring part held tracking, in the beatmap's part order.
+
+    ``sum(parts_hit)`` plus the head is :attr:`parts_collected`; the sequence
+    is what places a break on the body. ``None`` for anything not a slider.
+    """
+
     parts_collected: int | None = None
     """For a slider, how many of its scoring points were collected, head included.
 
@@ -592,6 +599,7 @@ def _judge(
 
     collected: int | None
     total: int | None
+    parts_hit: tuple[bool, ...] | None = None
     if obj.kind is diffcalc.ObjectKind.Slider:
         # The head is one scoring part among several, and a slider whose head
         # was missed still scores off ticks collected while sliding through it.
@@ -610,16 +618,23 @@ def _judge(
             required = int(Keys.M1 if head.button.side == "left" else Keys.M2)
 
         tracking = head.hit
+        # Which parts held and which dropped, not just how many. The count is
+        # what grades the slider; the sequence is what shows a reviewer where
+        # on the body the tracking broke.
+        outcomes: list[bool] = []
         for part in obj.parts:
             sample = sampler.at(part.time, required)
             if sample is None:
                 tracking = False
+                outcomes.append(False)
                 continue
             x, y, held = sample
             limit = follow_squared if tracking else radius_squared
             tracking = held and (x - part.x) ** 2 + (y - part.y) ** 2 <= limit
+            outcomes.append(tracking)
             if tracking:
                 collected += 1
+        parts_hit = tuple(outcomes)
         total = 1 + len(obj.parts)
         grade = _slider_grade(collected, total)
     elif head.hit and head.error is not None:
@@ -637,6 +652,7 @@ def _judge(
         grade_inferred=False,
         parts_collected=collected,
         parts_total=total,
+        parts_hit=parts_hit,
         error=head.error,
         press_time=head.press_time,
         button=head.button,
