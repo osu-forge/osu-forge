@@ -163,6 +163,26 @@ def build_app(
             raise HTTPException(status_code=404, detail="no such replay")
         return Response(content=payload.paths, media_type="application/octet-stream")
 
+    @app.get("/api/replays/{name}/background")
+    async def background(name: str) -> Response:
+        # The one response read from disk at request time — and the path was
+        # resolved when the payload was prepared, so the request still only
+        # names a replay. Holding megabytes of JPEG per payload resident would
+        # let the songs folder size the server's memory instead.
+        payload = payloads.get(name)
+        found = getattr(payload, "background", None)
+        if payload is None or found is None:
+            raise HTTPException(status_code=404, detail="no background")
+        try:
+            body = found.read_bytes()
+        except OSError as exc:
+            # Deleted or unreadable since startup. The map has no background
+            # any more, which is the same answer as never having had one.
+            raise HTTPException(status_code=404, detail="no background") from exc
+        suffix = found.suffix.lower()
+        kinds = {".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".png": "image/png"}
+        return Response(content=body, media_type=kinds.get(suffix, "application/octet-stream"))
+
     @app.websocket("/ws")
     async def socket(websocket: WebSocket) -> None:
         # The middleware above does not run for WebSockets, so the same checks

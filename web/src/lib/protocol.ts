@@ -328,7 +328,14 @@ export interface Entry {
 
 export interface Client {
   list(): Promise<Entry[]>;
-  load(name: string): Promise<{ header: ReplayHeader; samples: Samples; paths: Float32Array }>;
+  /** `backdrop` is an object URL for the map's background, or `null` when the
+   *  map has none — the caller owns revoking it when the replay is unloaded. */
+  load(name: string): Promise<{
+    header: ReplayHeader;
+    samples: Samples;
+    paths: Float32Array;
+    backdrop: string | null;
+  }>;
   /** The corpus answer, or `null` when the server has none — a server built
    *  without a corpus, not a corpus with nothing in it. */
   corpus(): Promise<Corpus | null>;
@@ -436,14 +443,26 @@ export function client(token: string, origin = ""): Client {
     async load(name: string) {
       const header = await json<ReplayHeader>(`/api/replays/${name}/header`);
       check(header);
-      const [frames, paths] = await Promise.all([
+      const [frames, paths, backdrop] = await Promise.all([
         bytes(`/api/replays/${name}/frames`),
         bytes(`/api/replays/${name}/paths`),
+        // Best effort, never fatal: a missing background is a plain page,
+        // not a failed load. An object URL rather than a data URL, because
+        // the token cannot ride on an <img src> and megabytes of base64 in
+        // the DOM would be paid on every re-render.
+        header.beatmap.background
+          ? fetch(`${origin}/api/replays/${name}/background`, { headers: auth })
+              .then(async (response) =>
+                response.ok ? URL.createObjectURL(await response.blob()) : null,
+              )
+              .catch(() => null)
+          : Promise.resolve(null),
       ]);
       return {
         header,
         samples: decodeSamples(header, frames),
         paths: decodePaths(header, paths),
+        backdrop,
       };
     },
   };

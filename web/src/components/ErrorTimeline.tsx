@@ -21,6 +21,8 @@ export interface ErrorTimelineProps {
   /** Map time, milliseconds. Drawn as a playhead. */
   clock: number;
   onSeek?: (time: number) => void;
+  /** A–B section repeat, map milliseconds, drawn over the chart. */
+  loop?: [number, number] | null;
   t: (key: Key, values?: Record<string, string | number>) => string;
 }
 
@@ -28,7 +30,7 @@ const HEIGHT = 96;
 /** How far past the 50 window the axis extends, as a multiple of it. */
 const HEADROOM = 1.15;
 
-export function ErrorTimeline({ header, clock, onSeek, t }: ErrorTimelineProps) {
+export function ErrorTimeline({ header, clock, onSeek, loop, t }: ErrorTimelineProps) {
   const canvas = useRef<HTMLCanvasElement>(null);
 
   useEffect(() => {
@@ -117,6 +119,20 @@ export function ErrorTimeline({ header, clock, onSeek, t }: ErrorTimelineProps) 
       ctx.fill();
     }
 
+    // The section being studied, tinted so where the loop will snap back to
+    // is visible on the same chart being scrubbed.
+    if (loop) {
+      const from = ((loop[0] - first) / span) * element.width;
+      const to = ((loop[1] - first) / span) * element.width;
+      ctx.fillStyle = token("--color-accent-breeze");
+      ctx.globalAlpha = 0.1;
+      ctx.fillRect(from, 0, to - from, element.height);
+      ctx.globalAlpha = 0.8;
+      ctx.fillRect(Math.round(from), 0, 1.5, element.height);
+      ctx.fillRect(Math.round(to), 0, 1.5, element.height);
+      ctx.globalAlpha = 1;
+    }
+
     const playhead = ((clock - first) / span) * element.width;
     ctx.strokeStyle = token("--color-ink");
     ctx.lineWidth = 1;
@@ -124,7 +140,7 @@ export function ErrorTimeline({ header, clock, onSeek, t }: ErrorTimelineProps) 
     ctx.moveTo(Math.round(playhead) + 0.5, 0);
     ctx.lineTo(Math.round(playhead) + 0.5, element.height);
     ctx.stroke();
-  }, [header, clock]);
+  }, [header, clock, loop]);
 
   function seek(event: React.PointerEvent<HTMLCanvasElement>) {
     if (!onSeek) return;

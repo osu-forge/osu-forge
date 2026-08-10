@@ -51,6 +51,7 @@ from __future__ import annotations
 import math
 import struct
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 import osu_forge_diffcalc as diffcalc
@@ -407,6 +408,16 @@ class ReplayPayload:
     paths: bytes = b""
     """Slider bodies, interleaved `float32` x, y. Indexed by each slider's `p`."""
 
+    background: Path | None = None
+    """The map's background image on disk, when it has one that exists.
+
+    A path rather than bytes, resolved when the payload was prepared: a few
+    megabytes of JPEG per replay held resident would let the songs folder
+    decide the server's memory footprint, while a path read on request costs
+    one disk read for the one replay being watched. The request only names a
+    replay; which file that means was decided here, not by the asker.
+    """
+
     @classmethod
     def build(
         cls,
@@ -416,6 +427,7 @@ class ReplayPayload:
         simulation: Simulation,
         rate: float,
         analysis: dict[str, Any] | None = None,
+        background: Path | None = None,
     ) -> ReplayPayload:
         counts = simulation.counts()
         paths, _ = encode_paths(beatmap)
@@ -464,4 +476,5 @@ class ReplayPayload:
             header=header,
             frames=encode_frames(simulation.frames.frames),
             paths=paths,
+            background=background,
         )

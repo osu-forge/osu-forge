@@ -701,12 +701,19 @@ def _serve(args: argparse.Namespace) -> int:
         # still worth playing back — so the failure costs the numbers, not the
         # replay.
         play = analyse(path, index)
+        # Checked rather than assumed, as the static page did: a map whose
+        # background was deleted would otherwise 404 on every open.
+        backdrop: Path | None = None
+        if judged.beatmap.background:
+            candidate = judged.beatmap_path.parent / judged.beatmap.background
+            backdrop = candidate if candidate.is_file() else None
         return ReplayPayload.build(
             replay_name=path.name,
             beatmap=judged.played,
             simulation=judged.simulation,
             rate=judged.replay.rate,
             analysis=None if isinstance(play, str) else analysis_payload(play),
+            background=backdrop,
         )
 
     # Newest first and capped: every payload stays resident for the life of the
