@@ -11,6 +11,7 @@ from __future__ import annotations
 import sqlite3
 from pathlib import Path
 
+from osuforge import __version__
 from osuforge.server.cache import open_cache
 
 FACTS = {
@@ -24,6 +25,7 @@ FACTS = {
     "agreement": "exact",
     "agreement_reason": "all judgements reproduce",
     "fractional_windows": False,
+    "arrival": [[1.5, 0.5], [-2.25, None], [0.0, 0.25]],
 }
 
 
@@ -68,6 +70,22 @@ class TestMisses:
             cache.put("a.osr", size=1000, mtime_ns=42, facts=FACTS)
         connection = sqlite3.connect(path)
         connection.execute("UPDATE plays SET tool = 'someone-else/9'")
+        connection.commit()
+        connection.close()
+        with open_cache(path) as reopened:
+            assert reopened.lookup("a.osr", size=1000, mtime_ns=42) is None
+            assert len(reopened) == 0
+
+    def test_rows_from_the_previous_schema_are_dropped_on_open(self, tmp_path: Path) -> None:
+        # The sweep is the whole migration story. Arrival pairs joined the
+        # facts at schema 2, and a row written before them cannot grow a pair
+        # later — the cursor frames it would need were discarded when the play
+        # was reduced. So the row goes and the play is analysed again.
+        path = tmp_path / "cache.db"
+        with open_cache(path) as cache:
+            cache.put("a.osr", size=1000, mtime_ns=42, facts=FACTS)
+        connection = sqlite3.connect(path)
+        connection.execute("UPDATE plays SET tool = ?", (f"{__version__}/1",))
         connection.commit()
         connection.close()
         with open_cache(path) as reopened:

@@ -83,6 +83,8 @@ const en = {
   "corpus.effective": "Worth, independent",
   "corpus.designEffect": "Design effect {n}. Hits in one sitting move together.",
   "corpus.measurementOnly": "A measurement, not a recommendation.",
+  "corpus.offsetsUnknown":
+    "Local offsets could not be read from osu!.db, so every map is taken to sit at zero. A map you have nudged in game would be left out of this answer if that were known.",
   "corpus.axes": "Where the accuracy keeps going",
   "corpus.actionable": "a setting moves this",
   "corpus.notActionable": "no setting fixes this",
@@ -188,6 +190,8 @@ const ko: Record<Key, string> = {
   "corpus.effective": "독립 표본 가치",
   "corpus.designEffect": "설계 효과 {n}. 한 세션 안의 히트는 함께 움직입니다.",
   "corpus.measurementOnly": "측정값이지 권고가 아닙니다.",
+  "corpus.offsetsUnknown":
+    "osu!.db에서 로컬 오프셋을 읽지 못해 모든 맵을 0으로 간주했습니다. 게임에서 오프셋을 조정한 맵이 있다면, 그 사실을 알았을 경우 이 답에서 제외되었을 것입니다.",
   "corpus.axes": "정확도가 계속 어디로 가나",
   "corpus.actionable": "설정으로 움직입니다",
   "corpus.notActionable": "설정으로는 안 고쳐집니다",

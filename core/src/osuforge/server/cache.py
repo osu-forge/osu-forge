@@ -50,7 +50,7 @@ __all__ = ["CACHE_ENV", "AnalysisCache", "default_cache_path", "open_cache"]
 CACHE_ENV = "OSU_FORGE_CACHE"
 """Environment variable overriding where the cache lives."""
 
-_SCHEMA = 1
+_SCHEMA = 2
 """Bumped together with any change to what `facts` carries."""
 
 _TOOL = f"{__version__}/{_SCHEMA}"

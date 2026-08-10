@@ -208,7 +208,9 @@ class TestGather:
         assert collected.entries[0].local_offset == -12
         assert collected.entries[0].sample.local_offset == -12
 
-    def test_the_arrival_split_sums_to_the_mean_error(self, songs: Path, replays: Path) -> None:
+    def test_arrival_pairs_stay_with_the_replay_that_produced_them(
+        self, songs: Path, replays: Path
+    ) -> None:
         digest = write_map(songs, "map")
         write_replay(
             replays,
@@ -218,13 +220,12 @@ class TestGather:
             errors=[8],
         )
         collected = gather(replays.glob("*.osr"), BeatmapIndex(songs))
-        split = collected.decomposition
-        assert split is not None
-        # The identity is the whole point of the split: approach plus reaction
-        # is the mean hit error, so a conversion that broke it would make the
-        # two halves describe different quantities.
-        assert split.total == pytest.approx(split.approach + split.reaction)
-        assert split.total == pytest.approx(8.0, abs=1.0)
+        # Per replay rather than pooled here, so the inclusion policy can still
+        # reach them: a pooled list has already forgotten which play each pair
+        # came from, and the split would then describe replays the bias refused.
+        entry = collected.entries[0]
+        assert entry.arrival
+        assert all(error == pytest.approx(8.0, abs=1.0) for error, _ in entry.arrival)
 
 
 class TestEndToEnd:
@@ -245,7 +246,7 @@ class TestEndToEnd:
     def test_a_folder_of_plays_becomes_an_answer(self, songs: Path, replays: Path) -> None:
         self._corpus(songs, replays, bias=6)
         collected = gather(replays.glob("*.osr"), BeatmapIndex(songs))
-        result = diagnose(collected.entries, decomposition=collected.decomposition)
+        result = diagnose(collected.entries)
 
         assert result.usable, result.insufficient
         assert result.sessions == 4
@@ -254,6 +255,21 @@ class TestEndToEnd:
         bias_axis = next(axis for axis in result.axes if axis.name == "timing bias")
         assert bias_axis.actionable
         assert "late" in bias_axis.verdict
+
+    def test_the_arrival_split_sums_to_the_mean_error(self, songs: Path, replays: Path) -> None:
+        self._corpus(songs, replays, bias=6)
+        collected = gather(replays.glob("*.osr"), BeatmapIndex(songs))
+        result = diagnose(collected.entries)
+
+        assert result.timing is not None
+        split = result.timing.decomposition
+        assert split is not None
+        # The identity is the whole point of the split: approach plus reaction
+        # is the mean hit error, so a conversion that broke it would make the
+        # two halves describe different quantities.
+        assert split.total == pytest.approx(split.approach + split.reaction)
+        assert split.total == pytest.approx(6.0, abs=1.0)
+        assert any(axis.name == "arrival" for axis in result.axes)
 
     def test_too_few_plays_is_a_sentence_rather_than_a_blank(
         self, songs: Path, replays: Path

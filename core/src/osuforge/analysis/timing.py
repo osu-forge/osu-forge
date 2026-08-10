@@ -76,14 +76,14 @@ class Decomposition:
     """
 
     approach: float
-    """`arrival - object time`, in map milliseconds, averaged.
+    """`arrival - object time`, in real milliseconds, averaged.
 
     Negative means the cursor was on target before the object was due. A global
     offset moves this term one for one.
     """
 
     reaction: float
-    """`press - arrival`, in map milliseconds, averaged.
+    """`press - arrival`, in real milliseconds, averaged.
 
     How long the hand waited once it was already on target. **No offset changes
     this**, so it is the floor under any timing recommendation.
@@ -149,7 +149,7 @@ class TimingProfile:
 def decomposition_from(pairs: list[tuple[float, float]]) -> Decomposition | None:
     """Split mean hit error into approach and reaction.
 
-    `pairs` are `(hit_error, dwell)` in map milliseconds, where dwell is how
+    `pairs` are `(hit_error, dwell)` in real milliseconds, where dwell is how
     long the cursor was already inside the hit radius before the press. Objects
     whose dwell could not be measured — the cursor was already on target when
     the approach window opened — are excluded, because for those the arrival

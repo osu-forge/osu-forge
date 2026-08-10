@@ -48,7 +48,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 
 from osuforge.analysis.clustering import ClusteredMean, ReplaySample, estimate, select
-from osuforge.analysis.timing import Decomposition, TimingProfile, profile
+from osuforge.analysis.timing import TimingProfile, decomposition_from, profile
 
 __all__ = [
     "MIN_REPLAYS",
@@ -103,6 +103,16 @@ class Entry:
     :func:`osuforge.analysis.clustering.select` excludes those replays; zero is
     the default because zero is what a reader that could not open `osu!.db`
     reports, and assuming no offset is the direction that invents no correction.
+    """
+
+    arrival: list[tuple[float, float]] = field(default_factory=list)
+    """`(hit error, dwell)` pairs in real milliseconds, one per timed object.
+
+    Per replay rather than pooled corpus-wide, because the arrival split has to
+    answer to the same inclusion policy the bias does: a replay excluded for its
+    local offset carries hit errors on a shifted clock, and pooling its pairs
+    would put that shift into `approach` while the bias refused it. A NaN dwell
+    means the arrival was not measurable and is dropped downstream.
     """
 
     @property
@@ -258,18 +268,18 @@ def _timing_axes(timing: TimingProfile) -> list[Axis]:
     return axes
 
 
-def diagnose(
-    entries: list[Entry],
-    *,
-    rate: float = 1.0,
-    seed: int = 0,
-    decomposition: Decomposition | None = None,
-) -> Diagnosis:
+def diagnose(entries: list[Entry], *, rate: float = 1.0, seed: int = 0) -> Diagnosis:
     """What the corpus supports about this player.
 
     Refuses rather than guesses below :data:`MIN_SESSIONS` and
     :data:`MIN_REPLAYS`, and says which of the two is missing — "play more" and
     "play on more days" are different instructions.
+
+    The arrival split is pooled here rather than by the caller, from the pairs
+    the kept replays carry, so that it answers to the same inclusion policy the
+    bias does. A caller that pooled its own would be free to build it from
+    replays this function excluded, and the two numbers would then describe
+    different corpora while sitting side by side in one report.
     """
     sessions = {entry.session for entry in entries}
     if len(entries) < MIN_REPLAYS or len(sessions) < MIN_SESSIONS:
@@ -298,7 +308,9 @@ def diagnose(
             insufficient="Every replay was excluded; " + inclusion.summary(),
         )
 
-    timing = profile(inclusion.kept, rate=rate, seed=seed, decomposition=decomposition)
+    kept_names = {sample.replay_id for sample in inclusion.kept}
+    pairs = [pair for entry in entries if entry.replay in kept_names for pair in entry.arrival]
+    timing = profile(inclusion.kept, rate=rate, seed=seed, decomposition=decomposition_from(pairs))
     kept_sessions = {sample.session for sample in inclusion.kept}
 
     return Diagnosis(

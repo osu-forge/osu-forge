@@ -54,10 +54,9 @@ from pathlib import Path
 from osuforge.analysis.clustering import assign_sessions
 from osuforge.analysis.corpus import Entry
 from osuforge.analysis.cursor import decompose
-from osuforge.analysis.timing import Decomposition, decomposition_from
 from osuforge.replay.source import BeatmapIndex, Judged, judge
 
-__all__ = ["Gathered", "gather"]
+__all__ = ["Gathered", "arrival_pairs", "gather"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -68,14 +67,6 @@ class Gathered:
 
     skipped: dict[str, str] = field(default_factory=dict)
     """Replay file name to why it contributed nothing."""
-
-    decomposition: Decomposition | None = None
-    """The arrival split, pooled over every gathered replay.
-
-    `None` when no object had a measurable arrival — a cursor already inside the
-    hit radius when the approach window opened has no arrival to measure, and on
-    a map of stacked objects that can be all of them.
-    """
 
     offsets_known: bool = False
     """Whether local offsets were read, or assumed to be zero everywhere.
@@ -106,13 +97,20 @@ def _name(judged: Judged) -> str:
     return f"{judged.beatmap.artist} - {judged.beatmap.title} [{judged.beatmap.version}]"
 
 
-def _arrival_pairs(judged: Judged) -> list[tuple[float, float]]:
+def arrival_pairs(judged: Judged) -> list[tuple[float, float]]:
     """`(hit error, dwell)` in real milliseconds, for objects with an arrival.
 
     Only hits usable for timing are paired, so the split describes the same
     hits the bias does. Objects whose arrival was not recorded contribute a NaN
-    dwell, which :func:`decomposition_from` drops — reported as absent rather
-    than as an arrival of zero, which would be a measurement nobody made.
+    dwell, which
+    :func:`osuforge.analysis.timing.decomposition_from` drops — reported as
+    absent rather than as an arrival of zero, which would be a measurement
+    nobody made.
+
+    Public because `forge serve` needs the same pairs at judge time: the cursor
+    frames and the modded beatmap are gone by the time a play is restored from
+    the analysis cache, so anything computed from them has to be computed once,
+    here, by the code the diagnose path uses.
     """
     rate = judged.simulation.rate
     errors = {
@@ -164,7 +162,6 @@ def gather(
     sessions = assign_sessions(timestamps)
 
     entries: list[Entry] = []
-    pairs: list[tuple[float, float]] = []
     for item in judged:
         judgements = item.replay.judgements
         entries.append(
@@ -179,13 +176,11 @@ def gather(
                 accuracy=judgements.accuracy,
                 breaks=judgements.count_miss,
                 local_offset=(offsets or {}).get(item.replay.beatmap_hash, 0),
+                # Kept with the replay rather than pooled here: the pairs of a
+                # replay the inclusion policy drops must not reach the split,
+                # and only `diagnose` knows which replays those are.
+                arrival=arrival_pairs(item),
             )
         )
-        pairs.extend(_arrival_pairs(item))
 
-    return Gathered(
-        entries=entries,
-        skipped=skipped,
-        decomposition=decomposition_from(pairs),
-        offsets_known=offsets is not None,
-    )
+    return Gathered(entries=entries, skipped=skipped, offsets_known=offsets is not None)
