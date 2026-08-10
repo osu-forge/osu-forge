@@ -1,5 +1,6 @@
 import type { Analysis, Break, Finding, ReplayHeader } from "@/lib/protocol";
 import { causeOf } from "@/lib/cause";
+import { ErrorHistogram } from "@/components/ErrorHistogram";
 import type { Key } from "@/i18n";
 
 /**
@@ -159,6 +160,13 @@ export function AnalysisPanel({ analysis, header, t, onSeek }: AnalysisPanelProp
 
       {analysis.combo_caveat && (
         <p className="text-body-sm text-mute">{analysis.combo_caveat}</p>
+      )}
+
+      {analysis.errors.length >= 5 && (
+        <section>
+          <h2 className="eyebrow mb-sm">{t("analysis.histogram")}</h2>
+          <ErrorHistogram analysis={analysis} header={header} t={t} />
+        </section>
       )}
 
       {analysis.findings.length > 0 && (

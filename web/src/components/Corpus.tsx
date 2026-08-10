@@ -29,6 +29,9 @@ import type { Key } from "@/i18n";
 
 export interface CorpusPanelProps {
   corpus: Corpus | null;
+  /** When this answer arrived, so a page left open shows whether the corpus
+   *  it is looking at is from just now or from before lunch. */
+  updatedAt?: Date | null;
   t: (key: Key, values?: Record<string, string | number>) => string;
 }
 
@@ -155,7 +158,7 @@ function BeatmapRow({ map, t }: { map: CorpusBeatmap; t: CorpusPanelProps["t"] }
   );
 }
 
-export function CorpusPanel({ corpus, t }: CorpusPanelProps) {
+export function CorpusPanel({ corpus, updatedAt, t }: CorpusPanelProps) {
   if (!corpus) return null;
 
   const excluded = Object.entries(corpus.excluded);
@@ -163,6 +166,15 @@ export function CorpusPanel({ corpus, t }: CorpusPanelProps) {
 
   return (
     <div className="flex flex-col gap-xl p-xl">
+      {updatedAt && (
+        <p className="eyebrow -mb-lg">
+          {t("corpus.updatedAt", {
+            time: `${String(updatedAt.getHours()).padStart(2, "0")}:${String(
+              updatedAt.getMinutes(),
+            ).padStart(2, "0")}`,
+          })}
+        </p>
+      )}
       {corpus.insufficient ? (
         // The refusal, where the verdict would have been — same size, same
         // place, so "cannot answer yet" is never mistaken for "nothing found".

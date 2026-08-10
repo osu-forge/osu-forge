@@ -30,6 +30,8 @@ const en = {
   "replays.loading": "Loading…",
   "replays.count": "{n} replay(s)",
   "replays.misses": "{n} miss",
+  "replays.filter": "Filter by artist, title or difficulty",
+  "replays.noMatch": "Nothing matches that filter.",
   "replays.new": "new",
 
   "player.play": "Play",
@@ -59,6 +61,10 @@ const en = {
   "analysis.whereLostHint":
     "The multiple is the share of the loss divided by the share of the objects. Above one, a group is costing more than its size predicts; at one it is doing exactly its share and says nothing.",
   "analysis.breaks": "Combo breaks",
+  "analysis.histogram": "Hit error distribution",
+  "analysis.histogramLabel":
+    "Histogram of this play's hit errors against the judgement windows",
+  "analysis.histogramCount": "{n} hit(s)",
 
   "corpus.title": "The corpus",
   "corpus.subtitle": "{n} replay(s) across {s} session(s)",
@@ -72,6 +78,7 @@ const en = {
   "corpus.axes": "Where the accuracy keeps going",
   "corpus.actionable": "a setting moves this",
   "corpus.notActionable": "no setting fixes this",
+  "corpus.updatedAt": "updated {time}",
   "corpus.perMap": "This map, or every map",
   "corpus.shifts": "shifts on its own",
   "corpus.thinMaps": "{n} more map(s) played too little to report alone.",
@@ -121,6 +128,8 @@ const ko: Record<Key, string> = {
   "replays.loading": "불러오는 중…",
   "replays.count": "리플레이 {n}개",
   "replays.misses": "미스 {n}",
+  "replays.filter": "아티스트·제목·난이도로 검색",
+  "replays.noMatch": "검색 결과가 없습니다.",
   "replays.new": "새 플레이",
 
   "player.play": "재생",
@@ -150,6 +159,9 @@ const ko: Record<Key, string> = {
   "analysis.whereLostHint":
     "배수는 손실 비중을 오브젝트 비중으로 나눈 값입니다. 1을 넘으면 그 그룹이 크기가 예측하는 것보다 더 깎아먹고 있고, 1이면 딱 제 몫만큼이라 아무 의미도 없습니다.",
   "analysis.breaks": "콤보 브레이크",
+  "analysis.histogram": "히트 오차 분포",
+  "analysis.histogramLabel": "판정창 위에 그린 이 플레이의 히트 오차 히스토그램",
+  "analysis.histogramCount": "히트 {n}개",
 
   "corpus.title": "코퍼스",
   "corpus.subtitle": "세션 {s}개에 걸친 리플레이 {n}개",
@@ -163,6 +175,7 @@ const ko: Record<Key, string> = {
   "corpus.axes": "정확도가 계속 어디로 가나",
   "corpus.actionable": "설정으로 움직입니다",
   "corpus.notActionable": "설정으로는 안 고쳐집니다",
+  "corpus.updatedAt": "{time} 갱신",
   "corpus.perMap": "이 맵인가, 모든 맵인가",
   "corpus.shifts": "단독으로도 치우침",
   "corpus.thinMaps": "{n}개 맵은 플레이가 적어 따로 보고하지 않습니다.",
