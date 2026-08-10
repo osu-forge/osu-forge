@@ -162,6 +162,14 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   arrives, so the corpus outgrows the playback cap and covers everything ever
   played, run over run. A damaged cache costs recomputation, never the
   server; deleting the file loses minutes, not facts.
+- The served page, reworked. The replay list carries accuracy and date and
+  gains a filter box; the analysis panel gains a hit-error histogram drawn
+  over the judgement windows in the judgement colours, with the windows
+  divided by the replay's rate so a Double Time play shows its genuinely
+  narrower real-time windows; `#corpus` and `#r=<replay>` deep links survive
+  a refresh and let an OBS scene pin one view; space plays and pauses; the
+  layout stacks on narrow windows instead of breaking; and the corpus panel
+  says when its answer arrived.
 
 ### Changed
 - Integration tests are deselected by default and require an environment

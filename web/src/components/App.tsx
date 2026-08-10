@@ -28,6 +28,19 @@ interface Loaded {
   paths: Float32Array;
 }
 
+/** The game's own accuracy formula, from the counts every header carries. */
+function accuracyOf(counts: ReplayHeader["counts"]): number {
+  const total = counts["300"] + counts["100"] + counts["50"] + counts.miss;
+  if (total === 0) return 0;
+  return (300 * counts["300"] + 100 * counts["100"] + 50 * counts["50"]) / (300 * total);
+}
+
+/** `MM-DD` from the analysis timestamp, or nothing when the play has none. */
+function playedDay(entry: Entry): string | null {
+  const at = entry.header.analysis?.played_at;
+  return at ? at.slice(5, 10) : null;
+}
+
 export function App({ token }: { token: string }) {
   const api = useMemo(() => client(token), [token]);
   const [locale, setLocale] = useState<Locale>(DEFAULT_LOCALE);
@@ -46,7 +59,11 @@ export function App({ token }: { token: string }) {
   /** `null` until the server has an answer — the entry point stays hidden
    *  rather than opening onto an empty panel. */
   const [corpus, setCorpus] = useState<Corpus | null>(null);
-  const [view, setView] = useState<"replay" | "corpus">("replay");
+  const [corpusAt, setCorpusAt] = useState<Date | null>(null);
+  const [view, setView] = useState<"replay" | "corpus">(() =>
+    typeof location !== "undefined" && location.hash === "#corpus" ? "corpus" : "replay",
+  );
+  const [query, setQuery] = useState("");
 
   const [playing, setPlaying] = useState(false);
   const [clock, setClock] = useState(0);
@@ -62,7 +79,13 @@ export function App({ token }: { token: string }) {
       .list()
       .then((found) => {
         setEntries(found);
-        if (found.length > 0) setSelected(found[0]!.name);
+        // A deep link names the play to open on; without one, the newest.
+        const wanted = decodeURIComponent(location.hash.replace(/^#r=/, ""));
+        const linked = location.hash.startsWith("#r=")
+          ? found.find((entry) => entry.name === wanted)
+          : undefined;
+        if (linked) setSelected(linked.name);
+        else if (found.length > 0) setSelected(found[0]!.name);
       })
       .catch((error: unknown) => {
         setFailure(
@@ -73,13 +96,25 @@ export function App({ token }: { token: string }) {
       });
   }, [api, t]);
 
+  // The address mirrors the view, so a refresh restores it and an OBS scene
+  // can point at the corpus (or one replay) and stay there. `replaceState`
+  // rather than assignment: browsing plays must not bury the back button.
+  useEffect(() => {
+    const hash =
+      view === "corpus" ? "#corpus" : selected ? `#r=${encodeURIComponent(selected)}` : "";
+    history.replaceState(null, "", hash || location.pathname);
+  }, [view, selected]);
+
   // Fetched once; after that the server pushes a fresh answer whenever a new
   // play changes it. Failure leaves the panel absent rather than the page
   // broken — the corpus is an extra reading, not the page's spine.
   useEffect(() => {
     api
       .corpus()
-      .then(setCorpus)
+      .then((found) => {
+        setCorpus(found);
+        if (found) setCorpusAt(new Date());
+      })
       .catch(() => setCorpus(null));
   }, [api]);
 
@@ -88,15 +123,35 @@ export function App({ token }: { token: string }) {
   // scroll position, the open selection and the playback clock all survive,
   // and those are what made the reloading version unusable.
   useEffect(() => {
-    return api.watch((entry) => {
-      setEntries((current) => {
-        const existing = current ?? [];
-        if (existing.some((item) => item.name === entry.name)) return existing;
-        return [entry, ...existing];
-      });
-      setArrived(entry.name);
-    }, setCorpus);
+    return api.watch(
+      (entry) => {
+        setEntries((current) => {
+          const existing = current ?? [];
+          if (existing.some((item) => item.name === entry.name)) return existing;
+          return [entry, ...existing];
+        });
+        setArrived(entry.name);
+      },
+      (fresh) => {
+        setCorpus(fresh);
+        setCorpusAt(new Date());
+      },
+    );
   }, [api]);
+
+  // Space is play/pause anywhere a control does not already own the key —
+  // the one shortcut every player's hands expect from a replay page.
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      if (event.code !== "Space" || view !== "replay" || !loaded) return;
+      const target = event.target as HTMLElement | null;
+      if (target && ["INPUT", "TEXTAREA", "SELECT", "BUTTON"].includes(target.tagName)) return;
+      event.preventDefault();
+      setPlaying((on) => !on);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [view, loaded]);
 
   useEffect(() => {
     if (!selected) return;
@@ -161,10 +216,16 @@ export function App({ token }: { token: string }) {
   }
 
   const header = loaded?.header;
+  const needle = query.trim().toLowerCase();
+  const shown = (entries ?? []).filter((entry) => {
+    if (!needle) return true;
+    const beatmap = entry.header.beatmap;
+    return `${beatmap.artist} ${beatmap.title} ${beatmap.version}`.toLowerCase().includes(needle);
+  });
 
   return (
-    <div className="grid h-screen grid-cols-[300px_1fr]">
-      <nav className="hairline-r overflow-y-auto">
+    <div className="grid h-screen grid-cols-1 grid-rows-[auto_1fr] md:grid-cols-[300px_1fr] md:grid-rows-1">
+      <nav className="hairline-b max-h-[38vh] overflow-y-auto md:hairline-r md:max-h-none md:border-b-0">
         {corpus && (
           <button
             type="button"
@@ -187,8 +248,18 @@ export function App({ token }: { token: string }) {
               ? t("replays.loading")
               : t("replays.count", { n: entries.length })}
           </div>
+          {entries !== null && entries.length > 5 && (
+            <input
+              type="search"
+              value={query}
+              onChange={(event) => setQuery(event.target.value)}
+              placeholder={t("replays.filter")}
+              aria-label={t("replays.filter")}
+              className="mt-sm w-full rounded-sm border border-hairline bg-transparent px-sm py-xs text-body-sm text-ink outline-none placeholder:text-mute focus:border-canvas-mid"
+            />
+          )}
         </div>
-        {entries?.map((entry) => (
+        {shown.map((entry) => (
           <button
             key={entry.name}
             type="button"
@@ -204,23 +275,31 @@ export function App({ token }: { token: string }) {
             </div>
             <div className="eyebrow mt-xxs flex items-center gap-sm truncate">
               <span className="truncate">
-                [{entry.header.beatmap.version}] ·{" "}
-                {t("replays.misses", { n: entry.header.counts.miss })}
+                [{entry.header.beatmap.version}]
               </span>
+              <span className="shrink-0 tabular-nums">
+                {(accuracyOf(entry.header.counts) * 100).toFixed(2)}%
+              </span>
+              {playedDay(entry) && (
+                <span className="shrink-0 tabular-nums">{playedDay(entry)}</span>
+              )}
               {entry.name === arrived && entry.name !== selected && (
-                <span className="rounded-pill border border-hairline px-sm text-[color:var(--color-accent-breeze)]">
+                <span className="shrink-0 rounded-pill border border-hairline px-sm text-[color:var(--color-accent-breeze)]">
                   {t("replays.new")}
                 </span>
               )}
             </div>
           </button>
         ))}
+        {entries !== null && entries.length > 0 && shown.length === 0 && (
+          <p className="px-lg py-md text-body-sm text-mute">{t("replays.noMatch")}</p>
+        )}
         {entries?.length === 0 && (
           <p className="px-lg py-md text-body-sm text-mute">{t("replays.empty")}</p>
         )}
       </nav>
 
-      <section className="flex min-w-0 flex-col">
+      <section className="flex min-h-0 min-w-0 flex-col overflow-y-auto md:overflow-y-visible">
         <header className="hairline-b flex items-baseline gap-lg px-xl py-md">
           <h1 className="text-display-xs">{t("app.title")}</h1>
           {view === "corpus" ? (
@@ -237,7 +316,7 @@ export function App({ token }: { token: string }) {
 
         {view === "corpus" ? (
           <div className="min-h-0 flex-1 overflow-y-auto">
-            <CorpusPanel corpus={corpus} t={t} />
+            <CorpusPanel corpus={corpus} updatedAt={corpusAt} t={t} />
           </div>
         ) : (
           <>
