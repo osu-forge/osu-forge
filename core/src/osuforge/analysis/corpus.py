@@ -57,6 +57,7 @@ __all__ = [
     "Diagnosis",
     "Entry",
     "Verdict",
+    "beatmap_reading",
     "by_beatmap",
     "diagnose",
 ]
@@ -335,3 +336,41 @@ def by_beatmap(entries: list[Entry], *, minimum: int = 3) -> dict[str, Clustered
             continue
         results[names[beatmap_hash]] = estimate(kept, resamples=2000)
     return results
+
+
+def beatmap_reading(
+    bias: ClusteredMean | None, per_beatmap: dict[str, ClusteredMean]
+) -> str | None:
+    """One sentence reading the pooled interval against the per-map ones.
+
+    That comparison is the reason :func:`by_beatmap` exists, and it should not
+    be left for a reader to reconstruct from a table: a bias that shows in the
+    pool while no individual map carries it is a global offset, and one that
+    shows on a single map while the pool sits on zero is a map to practise.
+    """
+    if bias is None or not per_beatmap:
+        return None
+    reported = len(per_beatmap)
+    shifted = sum(1 for found in per_beatmap.values() if found.excludes_zero)
+
+    if bias.excludes_zero and not shifted:
+        return (
+            f"The pooled interval excludes zero while none of the {reported} map(s) "
+            "reported individually does — what a global offset looks like rather "
+            "than a map-specific one."
+        )
+    if shifted and not bias.excludes_zero:
+        return (
+            f"The pooled mean is not distinguishable from zero, but {shifted} of the "
+            f"{reported} map(s) reported individually shifts on its own — a map to "
+            "practise rather than a setting to change."
+        )
+    if shifted:
+        return (
+            f"{shifted} of the {reported} map(s) reported individually shift on their "
+            "own, and the pooled interval does too — part habit, part map."
+        )
+    return (
+        f"Neither the pooled interval nor any of the {reported} map(s) reported "
+        "individually shifts away from zero."
+    )

@@ -123,6 +123,19 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 - `osuforge.replay.source` — locating a replay's beatmap and judging the two
   together, shared by the live page and the corpus so that the two cannot
   disagree about which objects a play hit.
+- `osuforge.server.corpus` — the corpus diagnosis, served. `forge serve` feeds
+  every analysed play into one `CorpusState`, prints the corpus summary at
+  startup, answers `GET /api/corpus` from a cached result so no request waits
+  on statistics, and pushes a fresh answer to open pages when a new play
+  changes it. Plays whose simulation failed the header screen stay out of the
+  estimate, are named with the screen's reason, and still count against the
+  corpus's health — which reports `may_recommend: false` on every answer,
+  because nothing in a serve run has been judged by the oracle.
+- A corpus panel on the served page: the three axes with their actionable
+  flags, the refusal sentence where the verdict would be when the corpus is
+  too thin, the per-beatmap comparison with a one-sentence reading of pooled
+  against per-map intervals (`osuforge.analysis.corpus.beatmap_reading`), and
+  the excluded plays with their reasons.
 
 ### Changed
 - Integration tests are deselected by default and require an environment

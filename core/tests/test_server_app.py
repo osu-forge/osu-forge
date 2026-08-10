@@ -123,6 +123,37 @@ class TestData:
             assert client.get(f"/api/replays/{attempt}/header", headers=auth()).status_code == 404
 
 
+class TestCorpus:
+    def build(self, access: Access, corpus: Any) -> TestClient:
+        app = build_app(
+            access,
+            page=PAGE,
+            payloads={"a.osr": _Payload()},
+            corpus=corpus,  # type: ignore[dict-item]
+        )
+        return TestClient(app, base_url=f"http://127.0.0.1:{PORT}")
+
+    def test_the_answer_is_served_when_there_is_one(self, access: Access) -> None:
+        client = self.build(access, lambda: {"replays": 12, "insufficient": None})
+        response = client.get("/api/corpus", headers=auth())
+        assert response.status_code == 200
+        assert response.json()["replays"] == 12
+
+    def test_no_provider_is_a_404_not_an_empty_corpus(self, access: Access) -> None:
+        # An empty object would read as "a corpus with nothing in it", which is
+        # a conclusion. No answer existing is a different statement.
+        client = self.build(access, None)
+        assert client.get("/api/corpus", headers=auth()).status_code == 404
+
+    def test_a_provider_with_no_answer_yet_is_also_a_404(self, access: Access) -> None:
+        client = self.build(access, lambda: None)
+        assert client.get("/api/corpus", headers=auth()).status_code == 404
+
+    def test_the_corpus_needs_the_token_like_everything_under_api(self, access: Access) -> None:
+        client = self.build(access, lambda: {"replays": 12})
+        assert client.get("/api/corpus").status_code == 401
+
+
 class TestWebSocket:
     def protocols(self, token: str = TOKEN) -> list[str]:
         return [f"osu-forge-token.{token}"]

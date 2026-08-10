@@ -11,10 +11,12 @@ from datetime import UTC, datetime, timedelta
 
 import numpy as np
 
+from osuforge.analysis.clustering import ClusteredMean
 from osuforge.analysis.corpus import (
     MIN_REPLAYS,
     MIN_SESSIONS,
     Entry,
+    beatmap_reading,
     by_beatmap,
     diagnose,
 )
@@ -172,3 +174,63 @@ class TestPerBeatmap:
 
     def test_an_empty_corpus_gives_no_maps(self) -> None:
         assert by_beatmap([]) == {}
+
+
+class TestReading:
+    """The sentence that reads the pooled interval against the per-map ones.
+
+    Built from hand-made intervals rather than from `diagnose`, because each
+    case is defined by which intervals exclude zero — and arranging real data
+    to land exactly there makes the test about the estimator instead.
+    """
+
+    @staticmethod
+    def interval(low: float, high: float) -> ClusteredMean:
+        return ClusteredMean(
+            mean=(low + high) / 2,
+            ci_low=low,
+            ci_high=high,
+            ci_source="cluster",
+            se_cluster=1.0,
+            se_naive=0.5,
+            n_hits=400,
+            n_replays=4,
+            n_sessions=3,
+            icc=0.05,
+        )
+
+    def test_a_pool_that_shifts_alone_reads_as_global(self) -> None:
+        reading = beatmap_reading(
+            self.interval(2.0, 6.0),
+            {"a": self.interval(-1.0, 5.0), "b": self.interval(-2.0, 4.0)},
+        )
+        assert reading is not None
+        assert "global offset" in reading
+
+    def test_a_map_that_shifts_alone_reads_as_that_map(self) -> None:
+        reading = beatmap_reading(
+            self.interval(-2.0, 3.0),
+            {"a": self.interval(4.0, 9.0), "b": self.interval(-3.0, 3.0)},
+        )
+        assert reading is not None
+        assert "map to practise" in reading
+
+    def test_both_shifting_says_part_habit_part_map(self) -> None:
+        reading = beatmap_reading(
+            self.interval(2.0, 6.0),
+            {"a": self.interval(4.0, 9.0)},
+        )
+        assert reading is not None
+        assert "part habit, part map" in reading
+
+    def test_nothing_shifting_says_so(self) -> None:
+        reading = beatmap_reading(
+            self.interval(-2.0, 3.0),
+            {"a": self.interval(-3.0, 3.0)},
+        )
+        assert reading is not None
+        assert "shifts away from zero" in reading
+
+    def test_no_reading_without_maps_or_pool(self) -> None:
+        assert beatmap_reading(self.interval(2.0, 6.0), {}) is None
+        assert beatmap_reading(None, {"a": self.interval(0.0, 1.0)}) is None
