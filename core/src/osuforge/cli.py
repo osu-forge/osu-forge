@@ -383,7 +383,14 @@ def _diagnose(args: argparse.Namespace) -> int:
     # Read rather than assumed. A map the player nudged in game is judged on a
     # shifted clock, and its hit errors are not on the same scale as the rest —
     # but a file that cannot be read has to mean "unknown", not "all zero".
-    verified, offsets_finding = osudb.load(path=args.db, songs=songs_dir)
+    #
+    # Defaulted from the install that was just discovered, the way the replay
+    # and songs folders are. osu!stable is portable, and osu!.db sits beside
+    # osu!.exe: falling back to %LOCALAPPDATA% here would read someone else's
+    # index, or none, and the hashes would then disagree with the Songs folder
+    # that was right all along. The failure is silent and its message blames
+    # the one ingredient that was correct.
+    verified, offsets_finding = osudb.load(path=args.db or install / "osu!.db", songs=songs_dir)
     offsets = verified.offsets if verified is not None and verified.trustworthy else None
 
     collected = gather(paths, BeatmapIndex(songs_dir), offsets=offsets)
@@ -659,8 +666,9 @@ def _serve(args: argparse.Namespace) -> int:
     # player nudged in game is judged on a shifted clock, and its replays
     # belong out of the pooled bias rather than silently in it. Unknown is
     # carried as unknown — the page says so rather than showing an answer that
-    # assumed zero everywhere.
-    verified, offsets_finding = osudb.load(path=args.db, songs=songs_dir)
+    # assumed zero everywhere. Defaulted from the discovered install for the
+    # same reason it is there: a portable osu! keeps its index beside its exe.
+    verified, offsets_finding = osudb.load(path=args.db or install / "osu!.db", songs=songs_dir)
     offsets = verified.offsets if verified is not None and verified.trustworthy else None
 
     index = BeatmapIndex(songs_dir)
@@ -1095,7 +1103,7 @@ def _build_parser() -> argparse.ArgumentParser:
         "--db",
         type=Path,
         default=None,
-        help="path to osu!.db, read for per-beatmap local offsets",
+        help="path to osu!.db, read for per-beatmap local offsets (default: beside the config)",
     )
     diagnose.add_argument(
         "--all-epochs",
@@ -1163,7 +1171,7 @@ def _build_parser() -> argparse.ArgumentParser:
         "--db",
         type=Path,
         default=None,
-        help="path to osu!.db, read for per-beatmap local offsets",
+        help="path to osu!.db, read for per-beatmap local offsets (default: beside the config)",
     )
     serve_cmd.add_argument(
         "--cache",

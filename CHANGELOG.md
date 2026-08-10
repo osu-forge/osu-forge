@@ -279,5 +279,12 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   returned nothing. It now fails on a non-zero exit, unparseable output, an
   empty package list, or a missing canary package, and splits compound license
   expressions so `MIT AND GPL-3.0` can no longer pass on the strength of the MIT.
+- `forge diagnose` and `forge serve` looked for `osu!.db` under `%LOCALAPPDATA%`
+  even when they had just found the install somewhere else. osu!stable is
+  portable and keeps its index beside `osu!.exe`, so on any install off that
+  path the offsets went unread, every beatmap was assumed to carry none, and the
+  report blamed the Songs folder — the one ingredient that was right. Both now
+  default the path from the install the config was found in, with `--db` still
+  overriding.
 
 [Unreleased]: https://github.com/osu-forge/osu-forge/commits/main
