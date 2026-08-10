@@ -568,13 +568,21 @@ class TestVerification:
     """Per-object error written into every replay before the change: +6 ms."""
 
     def corpus(self, root: Path, *, after: list[int]) -> tuple[Path, Path]:
-        """Twelve plays over four evenings, six on each side of the change.
+        """Twelve plays over six evenings, six on each side of the change.
 
-        Every evening carries its own 1 ms of drift, alternating so that each
-        side's mean stays exactly where it was written. A corpus whose sessions
-        all have identical means has no between-session variance at all, which
-        is neither what replays look like nor what the clustered estimators are
+        Every evening carries its own millisecond of drift, -1, 0 and +1 within
+        each side, so the side means stay exactly where they were written while
+        the evenings still differ from one another. A corpus whose sessions all
+        have identical means has no between-session variance at all, which is
+        neither what replays look like nor what the clustered estimators are
         written for.
+
+        Three evenings a side rather than two, because the interval on the
+        difference is the wider of a bootstrap and a Welch-corrected cluster
+        route, and two sessions a side buy the cluster route a t of 4.3. That
+        is wide enough to swallow the 5 ms move these tests are about, which is
+        the correct answer for a corpus that thin and not the thing being
+        tested here.
         """
         from datetime import UTC, datetime, timedelta
 
@@ -587,13 +595,13 @@ class TestVerification:
         digest = write_map(songs, "map", title="Some Song")
         start = datetime(2026, 8, 1, 20, 0, tzinfo=UTC)
         for index in range(12):
-            evening = index // 3
-            drift = 1 if evening % 2 else -1
+            evening = index // 2
+            drift = (evening % 3) - 1
             write_replay(
                 replays,
                 f"{index:02d}.osr",
                 beatmap_hash=digest,
-                when=start + timedelta(days=evening, minutes=20 * (index % 3)),
+                when=start + timedelta(days=evening, minutes=20 * (index % 2)),
                 errors=[error + drift for error in (self.BEFORE if index < 6 else after)],
             )
         return songs, replays

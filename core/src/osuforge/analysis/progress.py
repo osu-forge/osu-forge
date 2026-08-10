@@ -37,11 +37,10 @@ under the new settings" is an instruction and an empty panel is not.
 Same posture as :func:`osuforge.analysis.clustering.estimate`, for the same
 reason. Two routes to the interval on `after - before`:
 
-1. The cluster route: the two sides are disjoint sets of sessions, so their
-   errors are independent and the variances add. Degrees of freedom by
-   Welch-Satterthwaite on the session counts, which with two or three sessions
-   a side is the difference between a t of 2.8 and a normal's 1.96 — not a
-   refinement.
+1. The cluster route,
+   :func:`osuforge.analysis.clustering.welch_difference_ci`, which lives there
+   rather than here because :mod:`osuforge.analysis.verify` reports an
+   interval on the same difference and must build it the same way.
 2. A hierarchical bootstrap on each side — sessions, then replays, then hits —
    differenced draw by draw.
 
@@ -63,7 +62,6 @@ from dataclasses import dataclass
 from datetime import datetime
 
 import numpy as np
-from scipy import stats
 
 from osuforge.analysis.clustering import (
     BOOTSTRAP_RESAMPLES,
@@ -71,6 +69,7 @@ from osuforge.analysis.clustering import (
     ReplaySample,
     estimate,
     select,
+    welch_difference_ci,
 )
 from osuforge.analysis.corpus import Entry
 
@@ -354,18 +353,7 @@ def _compare(
     estimated_after = estimate(kept_after, seed=seed + 1, resamples=resamples)
     difference = estimated_after.mean - estimated_before.mean
 
-    cluster_ci = (math.nan, math.nan)
-    variance_before = estimated_before.se_cluster**2
-    variance_after = estimated_after.se_cluster**2
-    if math.isfinite(variance_before) and math.isfinite(variance_after):
-        se = math.sqrt(variance_before + variance_after)
-        df_before = estimated_before.n_sessions - 1
-        df_after = estimated_after.n_sessions - 1
-        welch = (variance_before + variance_after) ** 2 / (
-            variance_before**2 / df_before + variance_after**2 / df_after
-        )
-        critical = float(stats.t.ppf(1.0 - (1.0 - _CONFIDENCE) / 2.0, welch))
-        cluster_ci = (difference - critical * se, difference + critical * se)
+    cluster_ci = welch_difference_ci(kept_before, kept_after, confidence=_CONFIDENCE)
 
     bootstrap_ci = (math.nan, math.nan)
     draws_before = _bootstrap_means(kept_before, resamples=resamples, seed=seed)
