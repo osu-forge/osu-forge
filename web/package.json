@@ -11,6 +11,7 @@
     "prebuild": "npm run shaders",
     "build": "astro build",
     "preview": "astro preview",
+    "precheck": "npm run shaders",
     "check": "astro check && tsc --noEmit && tsc -p tsconfig.shaders.json",
     "licenses": "license-checker-rseidelsohn --production --onlyAllow 'MIT;ISC;BSD-2-Clause;BSD-3-Clause;Apache-2.0;0BSD;CC0-1.0;OFL-1.1;Unlicense;Python-2.0;BlueOak-1.0.0;MIT-0'"
   },
