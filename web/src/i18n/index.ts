@@ -74,6 +74,26 @@ const en = {
     "Histogram of this play's hit errors against the judgement windows",
   "analysis.histogramCount": "{n} hit(s)",
 
+  "keys.inputs": "The inputs",
+  "keys.pressCount": "{n} press(es)",
+  "keys.hold": "{ms} ms held, median",
+  "keys.holdUnknown": "still down at the end",
+  "keys.intervals": "Tap intervals",
+  "keys.intervalsHint":
+    "Real milliseconds from one tap to the next, whichever finger made it. The dashed line is this play's median; the tooltip converts a wait to the stream speed it would be at 1/4 snap. Click to jump there.",
+  "keys.chartLabel":
+    "Every wait between consecutive taps, across the recording, in real milliseconds",
+  "keys.tooltipInterval": "{ms} ms since the last tap",
+  "keys.tooltipBpm": "{bpm} BPM at 1/4 snap",
+  "keys.capped": "{n} wait(s) longer than {ms} ms sit on the top edge.",
+  "keys.median": "Median wait",
+  "keys.burst": "Fastest eight",
+  "keys.alternation": "Alternated",
+  "keys.balance": "K1 share",
+  "keys.pace": "{ms} ms · {bpm} BPM",
+  "keys.samplingHint":
+    "A replay records key state at the rendered framerate, about 60 times a second, so a press lands on the first sample at or after the finger moved — up to one sample gap late, 9 ms at the median and 16 ms at the 90th percentile. A wait carries one such gap at each end. Nothing finer than that is claimed here.",
+
   "corpus.title": "The corpus",
   "corpus.subtitle": "{n} replay(s) across {s} session(s)",
   "corpus.collecting": "still collecting evidence",
@@ -180,6 +200,25 @@ const ko: Record<Key, string> = {
   "analysis.histogram": "히트 오차 분포",
   "analysis.histogramLabel": "판정창 위에 그린 이 플레이의 히트 오차 히스토그램",
   "analysis.histogramCount": "히트 {n}개",
+
+  "keys.inputs": "입력",
+  "keys.pressCount": "{n}번",
+  "keys.hold": "누른 시간 중앙값 {ms} ms",
+  "keys.holdUnknown": "끝까지 눌린 채",
+  "keys.intervals": "탭 간격",
+  "keys.intervalsHint":
+    "어느 손가락이든, 한 탭에서 다음 탭까지 걸린 실제 밀리초입니다. 점선은 이 플레이의 중앙값이고, 툴팁은 그 간격을 1/4 스냅 기준 스트림 속도로 바꿔 보여줍니다. 클릭하면 그 지점으로 이동합니다.",
+  "keys.chartLabel": "녹화 전체에 걸친 연속 탭 사이의 간격, 실제 밀리초",
+  "keys.tooltipInterval": "직전 탭에서 {ms} ms",
+  "keys.tooltipBpm": "1/4 스냅 {bpm} BPM",
+  "keys.capped": "{ms} ms를 넘는 간격 {n}개는 위쪽 가장자리에 붙어 있습니다.",
+  "keys.median": "간격 중앙값",
+  "keys.burst": "가장 빠른 8연타",
+  "keys.alternation": "번갈아 친 비율",
+  "keys.balance": "K1 비중",
+  "keys.pace": "{ms} ms · {bpm} BPM",
+  "keys.samplingHint":
+    "리플레이는 키 상태를 렌더링 프레임레이트로, 초당 약 60번 기록합니다. 그래서 누름은 손가락이 움직인 뒤 첫 표본에 찍히며, 표본 간격만큼 늦습니다 — 중앙값 9 ms, 90분위 16 ms. 간격 값은 양 끝에서 각각 그만큼 흔들립니다. 그보다 더 정밀한 주장은 하지 않습니다.",
 
   "corpus.title": "코퍼스",
   "corpus.subtitle": "세션 {s}개에 걸친 리플레이 {n}개",

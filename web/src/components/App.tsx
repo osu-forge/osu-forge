@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AnalysisPanel } from "@/components/Analysis";
 import { CorpusPanel } from "@/components/Corpus";
 import { KeyOverlay } from "@/components/KeyOverlay";
+import { KeysPanel } from "@/components/KeysPanel";
 import { LiveHud } from "@/components/LiveHud";
 import { Playfield } from "@/components/Playfield";
 import { ErrorTimeline } from "@/components/ErrorTimeline";
@@ -463,12 +464,23 @@ export function App({ token }: { token: string }) {
               </div>
               <aside className="hairline-l min-h-0 overflow-y-auto border-l border-hairline">
                 {loaded && (
-                  <AnalysisPanel
-                    analysis={loaded.header.analysis}
-                    header={loaded.header}
-                    t={t}
-                    onSeek={seek}
-                  />
+                  <>
+                    <AnalysisPanel
+                      analysis={loaded.header.analysis}
+                      header={loaded.header}
+                      t={t}
+                      onSeek={seek}
+                    />
+                    {/* Below the analysis rather than inside it: the samples
+                        are always there, so this panel still has something to
+                        say about a play the analysis could not reproduce. */}
+                    <KeysPanel
+                      samples={loaded.samples}
+                      header={loaded.header}
+                      t={t}
+                      onSeek={seek}
+                    />
+                  </>
                 )}
               </aside>
             </div>
