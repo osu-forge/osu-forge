@@ -457,6 +457,20 @@ class TestAudioRules:
         # before the change, which is not a fix to hand out unprompted.
         assert finding.recommended_value is None  # type: ignore[attr-defined]
 
+    def test_compatibility_mode_claims_no_offset_history(self) -> None:
+        # The rule has read one config key. It does not know when the setting
+        # was turned on, and it has seen no replay, no journal and no offset,
+        # so the summary has to read the same for a player who has had this on
+        # for a year and one who turned it on ten minutes ago because of
+        # crackling. Saying an offset "was measured on this audio path" is
+        # backwards for the second player, whose offset was measured on the
+        # other one.
+        finding = _run({"AudioCompatibility": "1"}, {}, "cfg.audio.compatibility_mode")[0]
+        summary = finding.summary  # type: ignore[attr-defined]
+        assert "Any offset you tune with this on" in summary
+        assert "splits your replay history" in summary
+        assert "was measured" not in summary
+
     def test_an_empty_audio_device_is_the_system_default_not_a_mismatch(self) -> None:
         assert not _run({"AudioDevice": ""}, _audio(_endpoint()), "sys.audio.device_missing")
         assert not _run({}, _audio(_endpoint()), "sys.audio.device_missing")

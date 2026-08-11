@@ -20,7 +20,11 @@ import type { Key } from "@/i18n";
  * thresholds the server sends a sentence saying exactly what is missing, and
  * the panel shows that sentence where the verdict would have been. "Not
  * enough data" and "nothing wrong" are opposite conclusions that look
- * identical as a blank page.
+ * identical as a blank page. The refusal replaces the diagnosis and not the
+ * verification: the two count what they need differently, and the window in
+ * which the corpus is too thin to diagnose is exactly the window just after a
+ * change, where a CONTRADICTED verdict is the most useful sentence on the
+ * page.
  *
  * **Not actionable is the headline answer, not a hidden row.** Two of the
  * three axes usually end in "no setting fixes this", and hiding them would
@@ -90,6 +94,11 @@ const VERDICT_COLOUR: Record<string, string> = {
  * Whether the change did what it predicted — the only measurement on this page
  * that can come out wrong, and the reason the rest of it is not self-confirming.
  *
+ * Mounted from two places, because it outlives both of the refusals around it:
+ * beside the shift when the corpus can be diagnosed, and beside the corpus
+ * refusal when it cannot. It carries its own heading and no outer spacing, so
+ * whichever caller mounts it decides where it sits.
+ *
  * No interval here, deliberately. The shift above already puts one on this same
  * difference, and the two are not the same number: where the bootstrap route
  * wins they are drawn independently and disagree in the second decimal. Two
@@ -105,7 +114,7 @@ function VerificationBlock({
   t: CorpusPanelProps["t"];
 }) {
   return (
-    <div className="mt-lg">
+    <section>
       <h3 className="eyebrow mb-sm">{t("corpus.verification")}</h3>
       <div className="flex flex-wrap items-baseline gap-sm">
         <span
@@ -125,7 +134,7 @@ function VerificationBlock({
         )}
       </div>
       <p className="mt-sm max-w-[70ch] text-body-sm text-mute">{verification.reason}</p>
-    </div>
+    </section>
   );
 }
 
@@ -188,7 +197,11 @@ function ProgressSection({
       {/* Beside the shift rather than inside it: the two refusals count
           sessions their own way, so a verdict can exist where progress
           declined to draw one, and the other way round. */}
-      {progress.verification && <VerificationBlock verification={progress.verification} t={t} />}
+      {progress.verification && (
+        <div className="mt-lg">
+          <VerificationBlock verification={progress.verification} t={t} />
+        </div>
+      )}
     </section>
   );
 }
@@ -235,9 +248,20 @@ export function CorpusPanel({ corpus, updatedAt, t }: CorpusPanelProps) {
         </p>
       )}
       {corpus.insufficient ? (
-        // The refusal, where the verdict would have been — same size, same
-        // place, so "cannot answer yet" is never mistaken for "nothing found".
-        <p className="max-w-[62ch] text-body-lg text-body">{corpus.insufficient}</p>
+        <>
+          {/* The refusal, where the verdict would have been — same size, same
+              place, so "cannot answer yet" is never mistaken for "nothing
+              found". */}
+          <p className="max-w-[62ch] text-body-lg text-body">{corpus.insufficient}</p>
+          {/* The verification survives it. The diagnosis needs ten replays in
+              three sessions; the comparison needs five in two a side, so a
+              player who has just changed a setting and played a couple of
+              evenings under it has a verdict and no diagnosis. Dropping it
+              here would hide "put the change back" behind "play more". */}
+          {corpus.progress?.verification && (
+            <VerificationBlock verification={corpus.progress.verification} t={t} />
+          )}
+        </>
       ) : (
         <>
           <div className="grid grid-cols-2 gap-lg sm:grid-cols-4">
