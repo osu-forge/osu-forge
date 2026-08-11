@@ -177,7 +177,7 @@ jobs:
       # playwright-core has no downloader of its own, so the browser comes from
       # the matching full package. Same version on both sides or the library
       # talks a protocol the binary does not answer.
-      - uses: actions/cache@v4
+      - uses: actions/cache@v6
         with:
           path: ~/.cache/ms-playwright
           key: playwright-${{ runner.os }}-${{ env.PLAYWRIGHT_VERSION }}
