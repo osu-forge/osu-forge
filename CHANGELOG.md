@@ -288,6 +288,13 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   only the default endpoint rather than the whole list. And a driver whose
   shortest shared engine period is its default one is reported as the offer it
   is, with nothing to do about it. None of the three recommends a change.
+- Dependabot watches `web/`'s npm dependencies, on the same weekly schedule the
+  cargo and pip blocks use. `playwright-core` is held back from major and minor
+  bumps: its version has to equal the browser build the end-to-end job installs,
+  Dependabot cannot edit a workflow from an npm PR, and a bump on one side alone
+  is a red job on a PR that looks like a dependency chore. The license gate has
+  no npm job, so the file now says which ecosystems it actually covers rather
+  than implying all of them.
 
 ### Changed
 - The playback end-to-end test drives `forge serve` itself, and the test-only
@@ -345,6 +352,16 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   interpreter down with no traceback. The engine still gets the smaller binary.
 
 ### Fixed
+- Release signing asked for the uploaded artifact by an id the artifact did not
+  have yet. The signing step read `steps.upload.outputs.artifact-id` from a step
+  that ran two steps later, and a step output read before its step runs is the
+  empty string — on a required input, so the first release built with signing
+  turned on would have failed instead of signing. Nothing has run into it,
+  because signing is gated off until the certificate exists. The upload now sits
+  directly after staging, and the workflow grants itself `actions: read` so the
+  signing action can download what the run just uploaded. Checksums still come
+  after signing: signing rewrites the executable, so a hash taken before it
+  would describe a file nobody ships.
 - `osuforge.cli` could not be imported anywhere but Windows. Four probe modules
   built their `ctypes` structures from `ctypes.wintypes` while the module was
   still loading, and that module does not exist off Windows — so the rule
