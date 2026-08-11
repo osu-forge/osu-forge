@@ -66,7 +66,10 @@ def _compatibility_mode(context: RuleContext) -> Finding | None:
     return Finding(
         id="cfg.audio.compatibility_mode",
         title="Audio compatibility mode is on",
-        summary="Your offset was measured on this audio path and belongs to it.",
+        summary=(
+            "Any offset you tune with this on belongs to this audio path, and "
+            "turning it off splits your replay history there."
+        ),
         severity=Severity.INFO,
         confidence=Confidence.MEASURED,
         basis=Basis.HARD_FACT,

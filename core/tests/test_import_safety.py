@@ -25,7 +25,16 @@ import sys
 # The lie is meant for osuforge and nothing else, so the third-party stack is
 # loaded first, under the real platform: numpy reads `os.uname()` when it
 # believes it is on linux, and a Windows interpreter has no such function.
-_POSIX_CTYPES = """
+#
+# Loading anything first is also what makes the eviction necessary. A meta path
+# finder is consulted only for names that are not already in `sys.modules`, and
+# a Windows CPython imports `winreg` during startup, before a line of this
+# runs, so the block on it was inert: a module-scope `import winreg` in a probe
+# would have sailed through here and died on Linux. `ctypes.wintypes` is
+# evicted for the same reason, and its attribute on `ctypes` deleted besides,
+# because `from ctypes import wintypes` reads the attribute and never reaches a
+# finder while the submodule is still loaded.
+_POSIX = """
 import ctypes
 import sys
 
@@ -41,21 +50,57 @@ class _NotOnPosix:
 
 for attribute in ("WINFUNCTYPE", "windll", "oledll", "HRESULT"):
     delattr(ctypes, attribute)
+for module in ("winreg", "ctypes.wintypes"):
+    sys.modules.pop(module, None)
+if hasattr(ctypes, "wintypes"):
+    del ctypes.wintypes
 sys.meta_path.insert(0, _NotOnPosix())
 sys.platform = "linux"
+"""
 
+_IMPORT_THE_CLI = (
+    _POSIX
+    + """
 import osuforge.cli
 
 print(osuforge.cli.__name__)
 """
+)
+
+_TRY_THE_BLOCKED_MODULES = (
+    _POSIX
+    + """
+for name in ("winreg", "ctypes.wintypes"):
+    try:
+        __import__(name)
+    except ModuleNotFoundError:
+        continue
+    raise AssertionError(name + " imported anyway")
+
+print("blocked")
+"""
+)
 
 
-def test_the_cli_imports_on_a_posix_interpreter() -> None:
-    result = subprocess.run(
-        [sys.executable, "-c", _POSIX_CTYPES],
+def _under_posix_ctypes(script: str) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        [sys.executable, "-c", script],
         capture_output=True,
         text=True,
         check=False,
     )
+
+
+def test_the_lie_actually_blocks_the_windows_only_modules() -> None:
+    # Asserted before the test below rather than assumed by it: a shim that
+    # blocks nothing lets `test_the_cli_imports_on_a_posix_interpreter` pass on
+    # a command line that cannot be imported off Windows at all.
+    result = _under_posix_ctypes(_TRY_THE_BLOCKED_MODULES)
+    assert result.returncode == 0, f"a blocked module imported anyway:\n{result.stderr}"
+    assert result.stdout.strip() == "blocked"
+
+
+def test_the_cli_imports_on_a_posix_interpreter() -> None:
+    result = _under_posix_ctypes(_IMPORT_THE_CLI)
     assert result.returncode == 0, f"osuforge.cli did not import:\n{result.stderr}"
     assert result.stdout.strip() == "osuforge.cli"

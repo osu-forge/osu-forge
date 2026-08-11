@@ -11,7 +11,9 @@ It lives here rather than in either caller because the two must say the same
 thing about the same journal. The boundary whose settings were never written
 down is the sharp case: an empty diff reads to `compare` as "changed something
 other than the offset", which is a claim about a record that does not exist, so
-the sentence that replaces it has to be written once rather than twice.
+the sentence that replaces it has to be written once rather than twice. Saying
+the same thing includes being handed the corpus in the same order, which the
+two callers do not do, so the ordering is imposed here rather than trusted.
 
 The journal is read by the caller, not here. `forge diagnose` reads it per run
 and `forge serve` reads it once at startup, and a module that took a `Journal`
@@ -23,7 +25,13 @@ from __future__ import annotations
 import math
 from typing import TYPE_CHECKING, Any
 
-from osuforge.analysis.verify import Boundary, Comparison, Verdict, compare
+from osuforge.analysis.verify import (
+    BOOTSTRAP_RESAMPLES,
+    Boundary,
+    Comparison,
+    Verdict,
+    compare,
+)
 from osuforge.collect.epoch import ConfigEpoch
 
 if TYPE_CHECKING:
@@ -59,12 +67,16 @@ def verify_boundary(
     settings: dict[str, dict[str, str]],
     *,
     seed: int = 0,
+    resamples: int = BOOTSTRAP_RESAMPLES,
 ) -> tuple[Comparison, str | None] | None:
     """Score a recorded settings change against the prediction it made.
 
     `settings` maps a fingerprint to the settings behind it, as
     :meth:`osuforge.collect.journal.Journal.epoch_settings` returns it. A
     fingerprint absent from it was recorded before snapshots existed.
+
+    `entries` may arrive in any order. The two callers hand over two different
+    ones and the answer must not depend on which.
 
     Returns the comparison and, when the settings behind either fingerprint
     were never written down, the sentence that says so. `None` when the split
@@ -88,15 +100,27 @@ def verify_boundary(
             ConfigEpoch(digest=across.before_epoch, settings=before_settings)
         )
 
+    # Ordered here rather than taken as given, the way `progress` orders before
+    # it splits. `forge diagnose` gathers alphabetically by file name and the
+    # served panel by when the replay was played, and the bootstrap route
+    # inside `compare` resamples sessions and then replays out of the lists it
+    # is handed, drawing from one generator: two orders of one corpus walk that
+    # generator differently and arrive at different intervals, far enough apart
+    # to return `confirmed` on one road and `unchanged` on the other. The file
+    # name breaks ties, because `sorted` is stable and two replays sharing a
+    # timestamp would otherwise leave the caller's order deciding again.
+    ordered = sorted(entries, key=lambda entry: (entry.played_at, entry.replay))
+
     comparison = compare(
         Boundary(
             before_epoch=across.before_epoch,
             after_epoch=across.after_epoch,
-            before=[entry.sample for entry in entries if entry.played_at < across.boundary_at],
-            after=[entry.sample for entry in entries if entry.played_at >= across.boundary_at],
+            before=[entry.sample for entry in ordered if entry.played_at < across.boundary_at],
+            after=[entry.sample for entry in ordered if entry.played_at >= across.boundary_at],
             changed=changed,
         ),
         seed=seed,
+        resamples=resamples,
     )
     return comparison, unrecorded
 

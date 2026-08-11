@@ -352,6 +352,32 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   interpreter down with no traceback. The engine still gets the smaller binary.
 
 ### Fixed
+- `forge diagnose` and the served panel could reach different verdicts about one
+  journal. Verification split the corpus in whatever order its caller happened to
+  hold it — alphabetical by replay file name on the command line, chronological
+  on the panel — and the bootstrap route inside it resamples sessions and replays
+  out of those lists with one generator, so two orders of six evenings walked the
+  generator differently and landed on different intervals: `confirmed` on one
+  road and `unchanged` on the other, for a corpus that had not changed. The
+  entries are ordered inside the verification now, by when they were played and
+  then by file name, so two replays sharing a timestamp cannot hand the decision
+  back to the caller either.
+- The corpus panel threw away the verification whenever the current-epoch corpus
+  was too thin to diagnose. The diagnosis wants ten replays across three sessions
+  and the comparison wants five across two a side, so the window where the panel
+  refused was exactly the window just after a settings change — where a
+  CONTRADICTED verdict telling the player to put the change back is the most
+  useful sentence on the page, computed, sent over the wire and dropped by the
+  renderer. The refusal now stands in for the diagnosis and not for the verdict,
+  which is what `forge diagnose --json` already did.
+- The compatibility-mode finding said "Your offset was measured on this audio
+  path and belongs to it", which the rule cannot know: it reads one config key
+  and has seen no replay, no journal and no offset. For the player who turned the
+  setting on ten minutes ago because of crackling it was backwards — that offset
+  was measured on the other path, and the setting they just changed is why it no
+  longer applies. It now says any offset tuned with the setting on belongs to
+  this audio path, and that turning it off splits the replay history there, which
+  is true whenever the setting was turned on.
 - Release signing asked for the uploaded artifact by an id the artifact did not
   have yet. The signing step read `steps.upload.outputs.artifact-id` from a step
   that ran two steps later, and a step output read before its step runs is the
