@@ -1,8 +1,9 @@
 version: 2
 
 # Note: the license gate (.github/workflows/license-gate.yml) runs on every
-# Dependabot PR. A bump that pulls in a copyleft transitive dependency fails CI
-# rather than merging quietly.
+# Dependabot PR, so a cargo or pip bump that pulls in a copyleft transitive
+# dependency fails CI rather than merging quietly. The gate has no npm job, so
+# the allowlist in web/'s `licenses` script is not enforced on an npm bump.
 
 updates:
   - package-ecosystem: cargo
@@ -24,6 +25,24 @@ updates:
     groups:
       python-minor:
         update-types: ["minor", "patch"]
+
+  - package-ecosystem: npm
+    directory: /web
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    labels: ["dependencies", "web"]
+    groups:
+      web-minor:
+        update-types: ["minor", "patch"]
+    # playwright-core has to equal PLAYWRIGHT_VERSION in
+    # .github/workflows/ci.yml, which installs the browser build the library
+    # speaks to, and Dependabot cannot edit a workflow from an npm PR. Major
+    # and minor bumps are refused here; a patch bump still needs ci.yml changed
+    # in the same PR.
+    ignore:
+      - dependency-name: playwright-core
+        update-types: ["version-update:semver-major", "version-update:semver-minor"]
 
   - package-ecosystem: github-actions
     directory: /

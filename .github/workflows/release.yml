@@ -11,6 +11,9 @@ on:
 
 permissions:
   contents: write
+  # SignPath downloads the workflow-run artifact with the default github-token,
+  # which an explicit permissions block otherwise leaves at none.
+  actions: read
 
 jobs:
   build:
@@ -38,6 +41,16 @@ jobs:
           Copy-Item target\engine-release\osu-forge-engine.exe dist\
           Copy-Item LICENSE, NOTICE, README.md dist\
 
+      # Signing takes the artifact by id, so the upload has to have happened
+      # before the request is submitted. The workflow-run artifact therefore
+      # holds the unsigned build and no checksums. Release assets are read from
+      # dist/ at publish time, by which point both have happened.
+      - id: upload
+        uses: actions/upload-artifact@v7
+        with:
+          name: osu-forge-windows-x64
+          path: dist/
+
       # Code signing is the only mitigation that reliably works against the
       # heuristic AV detections that affect every memory-reading tool. It also
       # clears SmartScreen reputation warnings. SignPath provides free
@@ -59,6 +72,9 @@ jobs:
           wait-for-completion: true
           output-artifact-directory: dist
 
+      # After signing, never before: signing rewrites dist\osu-forge-engine.exe
+      # in place, and a hash of the unsigned file would not match the one the
+      # release publishes.
       - name: Compute SHA-256 checksums
         shell: pwsh
         run: |
@@ -66,12 +82,6 @@ jobs:
             ForEach-Object { "{0}  {1}" -f (Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLower(), $_.Name } |
             Out-File -Encoding utf8 dist\SHA256SUMS.txt
           Get-Content dist\SHA256SUMS.txt
-
-      - id: upload
-        uses: actions/upload-artifact@v7
-        with:
-          name: osu-forge-windows-x64
-          path: dist/
 
       - name: Publish release
         uses: softprops/action-gh-release@v3
