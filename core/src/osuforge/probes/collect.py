@@ -11,6 +11,7 @@ from collections.abc import Mapping
 from pathlib import Path
 
 from osuforge.probes.a11y import A11Y_PROBE_ID, probe_accessibility
+from osuforge.probes.audio import AUDIO_PROBE_ID, probe_audio_endpoint
 from osuforge.probes.base import ProbeResult
 from osuforge.probes.display import DISPLAYS_PROBE_ID, probe_displays
 from osuforge.probes.mouse import MOUSE_PROBE_ID, probe_mouse
@@ -47,6 +48,7 @@ def collect_probes(*, osu_exe: Path | None = None) -> Mapping[str, ProbeResult[o
         TIMER_PROBE_ID: probe_timer_resolution(),  # type: ignore[dict-item]
         POWER_PROBE_ID: probe_power_scheme(),  # type: ignore[dict-item]
         GAMEBAR_PROBE_ID: probe_game_bar(),  # type: ignore[dict-item]
+        AUDIO_PROBE_ID: probe_audio_endpoint(),  # type: ignore[dict-item]
         OSU_PROCESS_PROBE_ID: osu_process,  # type: ignore[dict-item]
     }
 

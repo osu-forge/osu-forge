@@ -15,6 +15,11 @@ import pytest
 
 from osuforge.probes import ProbeResult, ProbeStatus
 from osuforge.probes.a11y import probe_accessibility
+from osuforge.probes.audio import (
+    AudioEndpoint,
+    SharedModeEnginePeriod,
+    probe_audio_endpoint,
+)
 from osuforge.probes.collect import collect_probes
 from osuforge.probes.display import DISPLAYS_PROBE_ID, Monitor, primary, probe_displays
 from osuforge.probes.mouse import SENSITIVITY_ONE_TO_ONE, WindowsMouseSettings, probe_mouse
@@ -28,6 +33,37 @@ from osuforge.probes.system import (
     probe_power_scheme,
     probe_timer_resolution,
 )
+
+
+def _period(
+    default: int, *, minimum: int | None = None, current: int | None = 480
+) -> SharedModeEnginePeriod:
+    return SharedModeEnginePeriod(
+        default_frames=default,
+        fundamental_frames=default,
+        minimum_frames=default if minimum is None else minimum,
+        maximum_frames=default,
+        current_frames=current,
+    )
+
+
+def _endpoint(**kwargs: object) -> AudioEndpoint:
+    defaults: dict[str, object] = {
+        "device_id": "{0.0.0.00000000}.{11111111-2222-3333-4444-555555555555}",
+        "friendly_name": "Speakers (Test Audio)",
+        "transport": "USB",
+        "form_factor": 1,
+        "state": 1,
+        "default_period_ms": 10.0,
+        "minimum_period_ms": 3.0,
+        "mix_sample_rate_hz": 48000,
+        "mix_channels": 2,
+        "mix_bits_per_sample": 32,
+        "mix_format_tag": 65534,
+        "console_is_multimedia": True,
+    }
+    defaults.update(kwargs)
+    return AudioEndpoint(**defaults)  # type: ignore[arg-type]
 
 
 class TestProbeResult:
@@ -136,6 +172,33 @@ class TestDerivedProperties:
         assert TimerResolution(coarsest_ms=15.625, finest_ms=0.5, current_ms=0.5).at_finest
         assert not TimerResolution(coarsest_ms=15.625, finest_ms=0.5, current_ms=1.0).at_finest
 
+    def test_engine_period_is_frames_divided_by_the_mix_rate(self) -> None:
+        endpoint = _endpoint(engine_period=_period(480, current=480), mix_sample_rate_hz=48000)
+        assert endpoint.engine_period_ms == pytest.approx(10.0)
+
+    def test_engine_period_is_unknown_when_the_interface_did_not_answer(self) -> None:
+        # Windows before 1703 has no IAudioClient3 at all, and a driver may
+        # implement it without reporting a current period.
+        assert _endpoint().engine_period_ms is None
+        assert _endpoint(engine_period=_period(480, current=None)).engine_period_ms is None
+
+    def test_absent_low_latency_is_not_the_same_answer_as_no(self) -> None:
+        # None means the interface never answered; False means the driver
+        # answered and offers nothing below its default. Collapsing the first
+        # into the second would report a fact nobody measured.
+        assert _endpoint().low_latency_shared is None
+        assert _endpoint(engine_period=_period(480, minimum=480)).low_latency_shared is False
+        assert _endpoint(engine_period=_period(480, minimum=128)).low_latency_shared is True
+
+    def test_form_factor_falls_back_to_the_number_it_reported(self) -> None:
+        assert _endpoint(form_factor=1).form_factor_name == "speakers"
+        assert _endpoint(form_factor=None).form_factor_name == "unknown"
+        assert _endpoint(form_factor=99).form_factor_name == "99"
+
+    def test_endpoint_state_reads_as_active(self) -> None:
+        assert _endpoint(state=1).active
+        assert not _endpoint(state=8).active  # DEVICE_STATE_UNPLUGGED
+
     def test_fso_flag_detection(self) -> None:
         assert not FullscreenOptimizations("osu!.exe", None).has_entry
         assert not FullscreenOptimizations("osu!.exe", "$ IgnoreFreeLibrary<osu!au>").disabled
@@ -158,6 +221,7 @@ class TestCollect:
             "system.timer_resolution",
             "system.power_scheme",
             "system.game_bar",
+            "audio.endpoint",
             "process.osu",
             "system.fullscreen_optimizations",
         ):
@@ -221,12 +285,45 @@ class TestAgainstRealHardware:
         # Whether osu! happens to be running is not the point; not erroring is.
         assert probe_osu_process().status is not ProbeStatus.ERROR
 
+    def test_audio_endpoint_reports_a_plausible_period(self) -> None:
+        # A machine with no sound card is a legitimate state, so an unavailable
+        # answer is fine here; an error is not, and neither is a nonsense number.
+        result = probe_audio_endpoint()
+        assert result.status is not ProbeStatus.ERROR
+        if not result.ok:
+            return
+        endpoint = result.require()
+        assert 0.0 < endpoint.minimum_period_ms <= endpoint.default_period_ms <= 100.0
+        assert 8000 <= endpoint.mix_sample_rate_hz <= 768_000
+        assert 1 <= endpoint.mix_channels <= 32
+
+    def test_reading_the_endpoint_twice_leaves_com_usable(self) -> None:
+        # The probe enters and leaves a COM apartment on every call and shares
+        # the process with whatever else asked for one. Leaking a reference or
+        # uninitialising somebody else's apartment shows up on the second call.
+        assert probe_audio_endpoint().status is probe_audio_endpoint().status
+
 
 @pytest.mark.skipif(sys.platform == "win32", reason="checks the non-Windows path")
 def test_windows_only_probes_degrade_rather_than_crash() -> None:
-    for result in (probe_displays(), probe_mouse(), probe_accessibility()):
+    for result in (
+        probe_displays(),
+        probe_mouse(),
+        probe_accessibility(),
+        probe_audio_endpoint(),
+    ):
         assert result.status is ProbeStatus.UNAVAILABLE
         assert "Windows" in (result.reason or "")
+
+
+def test_the_audio_probe_refuses_before_it_touches_com(monkeypatch: pytest.MonkeyPatch) -> None:
+    # The gate above never runs on the machine this suite is developed on, and
+    # the audio probe is the one that would fault rather than fail without it:
+    # every name it needs, `HRESULT` included, exists only under Windows.
+    monkeypatch.setattr(sys, "platform", "linux")
+    result = probe_audio_endpoint()
+    assert result.status is ProbeStatus.UNAVAILABLE
+    assert "Windows" in (result.reason or "")
 
 
 def test_display_probe_id_is_stable() -> None:

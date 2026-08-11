@@ -11,6 +11,11 @@ import pytest
 from osuforge.config import OsuConfig
 from osuforge.models import Basis, Severity
 from osuforge.probes.a11y import A11Y_PROBE_ID, AccessibilityShortcuts, Shortcut
+from osuforge.probes.audio import (
+    AUDIO_PROBE_ID,
+    AudioEndpoint,
+    SharedModeEnginePeriod,
+)
 from osuforge.probes.base import ProbeResult
 from osuforge.probes.display import DISPLAYS_PROBE_ID, Monitor
 from osuforge.probes.mouse import MOUSE_PROBE_ID, WindowsMouseSettings
@@ -54,6 +59,45 @@ def _shortcuts(sticky: int = 0, filt: int = 0, toggle: int = 0) -> Accessibility
         filter_keys=Shortcut("Filter Keys", filt, "hold right Shift for eight seconds"),
         toggle_keys=Shortcut("Toggle Keys", toggle, "hold Num Lock for five seconds"),
     )
+
+
+def _endpoint(
+    name: str = "Speakers (Test Audio)",
+    *,
+    default_frames: int = 480,
+    minimum_frames: int = 480,
+    engine: bool = True,
+) -> AudioEndpoint:
+    period = (
+        SharedModeEnginePeriod(
+            default_frames=default_frames,
+            fundamental_frames=default_frames,
+            minimum_frames=minimum_frames,
+            maximum_frames=default_frames,
+            current_frames=default_frames,
+        )
+        if engine
+        else None
+    )
+    return AudioEndpoint(
+        device_id="{0.0.0.00000000}.{11111111-2222-3333-4444-555555555555}",
+        friendly_name=name,
+        transport="USB",
+        form_factor=1,
+        state=1,
+        default_period_ms=10.0,
+        minimum_period_ms=3.0,
+        mix_sample_rate_hz=48000,
+        mix_channels=2,
+        mix_bits_per_sample=32,
+        mix_format_tag=65534,
+        console_is_multimedia=True,
+        engine_period=period,
+    )
+
+
+def _audio(endpoint: AudioEndpoint) -> dict[str, object]:
+    return {AUDIO_PROBE_ID: ProbeResult.of(AUDIO_PROBE_ID, endpoint, "IAudioClient")}
 
 
 def _run(entries: dict[str, str], probes: dict[str, object], rule_id: str) -> list[object]:
@@ -387,6 +431,95 @@ class TestSystemRules:
             )
         }
         assert not _run({}, probes, "sys.process.osu_running")
+
+
+class TestAudioRules:
+    def test_compatibility_mode_needs_no_probe(self) -> None:
+        # It reads a config key, so it must answer under `--no-probes` too.
+        findings = _run({"AudioCompatibility": "1"}, {}, "cfg.audio.compatibility_mode")
+        assert len(findings) == 1
+        assert not _run({"AudioCompatibility": "1"}, {}, "cfg.audio.compatibility_mode.skipped")
+
+    @pytest.mark.parametrize("entries", [{}, {"AudioCompatibility": "0"}])
+    def test_compatibility_mode_off_or_absent_is_silent(self, entries: dict[str, str]) -> None:
+        assert not _run(entries, {}, "cfg.audio.compatibility_mode")
+
+    def test_compatibility_mode_states_the_fact_and_attributes_the_rest(self) -> None:
+        # The setting being on is a fact. What it does to the output path is
+        # the community's account, and the finding has to say so rather than
+        # dress it as a reading.
+        finding = _run({"AudioCompatibility": "1"}, {}, "cfg.audio.compatibility_mode")[0]
+        assert finding.basis is Basis.HARD_FACT  # type: ignore[attr-defined]
+        assert finding.severity is Severity.INFO  # type: ignore[attr-defined]
+        assert "Players understand it" in finding.rationale  # type: ignore[attr-defined]
+        assert any("never reads osu!'s memory" in c for c in finding.caveats)  # type: ignore[attr-defined]
+        # No recommendation: changing it invalidates every offset measured
+        # before the change, which is not a fix to hand out unprompted.
+        assert finding.recommended_value is None  # type: ignore[attr-defined]
+
+    def test_an_empty_audio_device_is_the_system_default_not_a_mismatch(self) -> None:
+        assert not _run({"AudioDevice": ""}, _audio(_endpoint()), "sys.audio.device_missing")
+        assert not _run({}, _audio(_endpoint()), "sys.audio.device_missing")
+
+    @pytest.mark.parametrize(
+        "configured",
+        ["Speakers (Test Audio)", "speakers test audio", "Test Audio", "SPEAKERS(TESTAUDIO)"],
+    )
+    def test_a_name_that_differs_only_in_wording_is_not_a_mismatch(self, configured: str) -> None:
+        # osu! and Windows spell the same device differently, and a rule that
+        # called that a missing device would be confidently wrong about
+        # something the user can see in their own options menu.
+        assert not _run(
+            {"AudioDevice": configured}, _audio(_endpoint()), "sys.audio.device_missing"
+        )
+
+    def test_an_unrelated_name_is_shown_beside_the_endpoint_without_a_verdict(self) -> None:
+        findings = _run(
+            {"AudioDevice": "Headphones (Old Interface)"},
+            _audio(_endpoint("Speakers (Test Audio)")),
+            "sys.audio.device_missing",
+        )
+        assert len(findings) == 1
+        finding = findings[0]
+        assert finding.severity is Severity.INFO  # type: ignore[attr-defined]
+        assert "Headphones (Old Interface)" in finding.summary  # type: ignore[attr-defined]
+        assert "Speakers (Test Audio)" in finding.summary  # type: ignore[attr-defined]
+        # Reading only the default endpoint cannot establish that a device is
+        # gone, so the finding must not claim it is.
+        assert "does not say the" in finding.rationale  # type: ignore[attr-defined]
+        assert finding.recommended_value is None  # type: ignore[attr-defined]
+
+    def test_one_offered_period_is_reported_as_the_drivers_offer(self) -> None:
+        findings = _run({}, _audio(_endpoint()), "sys.audio.no_low_latency_shared")
+        assert len(findings) == 1
+        finding = findings[0]
+        assert finding.basis is Basis.HARD_FACT  # type: ignore[attr-defined]
+        assert finding.severity is Severity.INFO  # type: ignore[attr-defined]
+        assert "10.000 ms" in finding.title  # type: ignore[attr-defined]
+        assert finding.recommended_value is None  # type: ignore[attr-defined]
+        assert any("not your audio latency" in c for c in finding.caveats)  # type: ignore[attr-defined]
+        assert any("BASS" in c for c in finding.caveats)  # type: ignore[attr-defined]
+
+    def test_a_driver_offering_a_lower_period_is_silent(self) -> None:
+        probes = _audio(_endpoint(minimum_frames=128))
+        assert not _run({}, probes, "sys.audio.no_low_latency_shared")
+
+    def test_no_iaudioclient3_is_silent_rather_than_reported_as_no_offer(self) -> None:
+        # Older Windows has no interface to ask. Not knowing and being told
+        # "no" are different answers and only one of them was measured.
+        probes = _audio(_endpoint(engine=False))
+        assert not _run({}, probes, "sys.audio.no_low_latency_shared")
+
+    def test_an_unreadable_endpoint_skips_visibly(self) -> None:
+        probes: dict[str, object] = {
+            AUDIO_PROBE_ID: ProbeResult.unavailable(
+                AUDIO_PROBE_ID, "IAudioClient", "Windows reports no default playback device"
+            )
+        }
+        for rule_id in ("sys.audio.device_missing", "sys.audio.no_low_latency_shared"):
+            skipped = _run({"AudioDevice": "Headphones"}, probes, f"{rule_id}.skipped")
+            assert len(skipped) == 1, rule_id
+            assert "no default playback device" in str(skipped[0].evidence[0].value)  # type: ignore[attr-defined]
 
 
 class TestProbeTypeGuard:

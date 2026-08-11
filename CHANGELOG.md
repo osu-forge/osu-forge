@@ -268,6 +268,26 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   with no interval of its own. Progress and verification each draw their own
   bootstrap over the same difference and disagree in the third decimal when that
   route wins, so the interval stays where it already was, once, on the shift.
+- `osuforge.probes.audio` — the audio endpoint, read without touching the
+  stream. Which device Windows defaults to and what it is plugged into, the
+  shared mixer's format, how often the engine hands the driver a buffer, and
+  whether the driver offers any shared period below its default one. Nothing
+  here initialises an audio client: the two calls that would report a buffer
+  size need `Initialize`, which puts a stream in the session, and a probe that
+  claims to be read-only has no business doing that while osu! is playing.
+  What is left is one term of the audio path, and the report says so rather
+  than calling it latency — osu!'s own buffering is inside BASS inside the
+  game, and the driver, the DAC and any effects chain add their own.
+- Three audio rules, the first users of the audio category. Compatibility mode
+  being on is reported as a fact about the config and as the reason an offset
+  measured before turning it off would not survive turning it off; what the
+  setting does to the output path is carried as the community's account,
+  labelled as one. A configured device name that matches nothing about the
+  default endpoint is shown beside it without a verdict, because the
+  comparison is text against a localized, synthesized name and osu-forge reads
+  only the default endpoint rather than the whole list. And a driver whose
+  shortest shared engine period is its default one is reported as the offer it
+  is, with nothing to do about it. None of the three recommends a change.
 
 ### Changed
 - The playback end-to-end test drives `forge serve` itself, and the test-only
