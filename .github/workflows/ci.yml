@@ -187,8 +187,8 @@ jobs:
       # OSU_FORGE_E2E_REQUIRE turns "prerequisite missing" from a skip into a
       # failure. Without it a broken browser install would show up as a green
       # job that tested nothing. The file is named rather than selected by
-      # marker because a bare `-m e2e` still collects the Windows-only test
-      # modules, which cannot be imported here.
+      # marker because it holds the only e2e test there is, and naming it
+      # spares this job collecting the whole suite to run one test.
       - name: Play a replay back in a real browser
         run: pytest tests/test_e2e_playback.py -m e2e --basetemp="$RUNNER_TEMP/e2e"
         working-directory: core

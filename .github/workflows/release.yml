@@ -78,9 +78,17 @@ jobs:
       - name: Compute SHA-256 checksums
         shell: pwsh
         run: |
-          Get-ChildItem dist -File |
-            ForEach-Object { "{0}  {1}" -f (Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLower(), $_.Name } |
-            Out-File -Encoding utf8 dist\SHA256SUMS.txt
+          # Collected into a variable before anything is written. PowerShell
+          # starts every cmdlet in a pipeline before the first one emits, so a
+          # write on the end of this one would already be holding
+          # dist\SHA256SUMS.txt open by the time Get-ChildItem enumerated dist
+          # — and Get-FileHash cannot read a file another handle has open, so
+          # the step would throw on the empty file it had just made. The name
+          # is skipped as well, so this says the same thing run twice.
+          $lines = Get-ChildItem dist -File |
+            Where-Object { $_.Name -ne "SHA256SUMS.txt" } |
+            ForEach-Object { "{0}  {1}" -f (Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLower(), $_.Name }
+          $lines | Set-Content -Encoding utf8 dist\SHA256SUMS.txt
           Get-Content dist\SHA256SUMS.txt
 
       - name: Publish release

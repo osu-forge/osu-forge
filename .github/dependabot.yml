@@ -37,12 +37,14 @@ updates:
         update-types: ["minor", "patch"]
     # playwright-core has to equal PLAYWRIGHT_VERSION in
     # .github/workflows/ci.yml, which installs the browser build the library
-    # speaks to, and Dependabot cannot edit a workflow from an npm PR. Major
-    # and minor bumps are refused here; a patch bump still needs ci.yml changed
-    # in the same PR.
+    # speaks to, and Dependabot cannot edit a workflow from an npm PR. So every
+    # update type is refused, patch included: a library one patch ahead of its
+    # browser build turns the end-to-end job red exactly as a minor bump does,
+    # and folded into the group above it would arrive inside a PR that reads
+    # like a routine chore. A human moves this version, in the same commit that
+    # moves ci.yml.
     ignore:
       - dependency-name: playwright-core
-        update-types: ["version-update:semver-major", "version-update:semver-minor"]
 
   - package-ecosystem: github-actions
     directory: /

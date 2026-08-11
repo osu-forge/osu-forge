@@ -289,12 +289,13 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   shortest shared engine period is its default one is reported as the offer it
   is, with nothing to do about it. None of the three recommends a change.
 - Dependabot watches `web/`'s npm dependencies, on the same weekly schedule the
-  cargo and pip blocks use. `playwright-core` is held back from major and minor
-  bumps: its version has to equal the browser build the end-to-end job installs,
-  Dependabot cannot edit a workflow from an npm PR, and a bump on one side alone
-  is a red job on a PR that looks like a dependency chore. The license gate has
-  no npm job, so the file now says which ecosystems it actually covers rather
-  than implying all of them.
+  cargo and pip blocks use. `playwright-core` is held out of automatic bumps
+  entirely, patch releases included: its version has to equal the browser build
+  the end-to-end job installs, Dependabot cannot edit a workflow from an npm PR,
+  and a bump on one side alone is a red job on a PR that looks like a dependency
+  chore. It moves by hand, in the commit that moves `ci.yml`. The license gate
+  has no npm job, so the file now says which ecosystems it actually covers
+  rather than implying all of them.
 
 ### Changed
 - The playback end-to-end test drives `forge serve` itself, and the test-only
@@ -378,6 +379,16 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   longer applies. It now says any offset tuned with the setting on belongs to
   this audio path, and that turning it off splits the replay history there, which
   is true whenever the setting was turned on.
+- The release checksum step would have thrown on the first tag ever pushed. It
+  piped `Get-ChildItem dist` into `Out-File dist\SHA256SUMS.txt`, and PowerShell
+  starts every cmdlet in a pipeline before the first one emits — so the output
+  file already existed, empty and held open, when the enumeration reached it, and
+  `Get-FileHash` cannot read a file another handle has open. Under the `stop`
+  preference GitHub sets on every `pwsh` step the run exits non-zero there, and
+  `Publish release` never runs: no release, no assets, on a workflow whose first
+  execution is the first `v*` tag. The lines are collected before anything is
+  written now, and `SHA256SUMS.txt` is skipped by name so a second run says what
+  the first one did.
 - Release signing asked for the uploaded artifact by an id the artifact did not
   have yet. The signing step read `steps.upload.outputs.artifact-id` from a step
   that ran two steps later, and a step output read before its step runs is the
