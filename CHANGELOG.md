@@ -353,6 +353,28 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   interpreter down with no traceback. The engine still gets the smaller binary.
 
 ### Fixed
+- The progress panel and the verification verdict still put two intervals on one
+  difference. Moving the Welch route into `clustering.welch_difference_ci` made
+  the two agree wherever that route was the wider of the pair, which read as the
+  problem being solved; the bootstrap route underneath was never shared. It was
+  written twice, over 10,000 resamples on one road and 4,000 on the other, and
+  out of two generator topologies — two independently seeded streams differenced
+  elementwise against both sides alternating down one stream. Over 24 corpora
+  carrying a real 7 ms move, three to six sessions a side, with the same seed and
+  resample count handed to both, the two blocks disagreed about the same boundary
+  in 21 of them; the three that agreed were the three the cluster route won on
+  both roads. In the sharpest case the two roads selected different routes
+  outright, each having weighed its own bootstrap width against the shared
+  cluster one. There is one construction now, `clustering.difference_interval`,
+  and one resample count behind both blocks.
+- `progress` could answer one folder two ways. It ordered on when a replay was
+  played and nothing else, while the verification beside it had already been
+  taught to break ties on the file name. `sorted` is stable, so replays sharing a
+  timestamp kept whatever order the caller held them in — alphabetical on the
+  command line, chronological on the panel — and the bootstrap resamples out of
+  those lists with one generator. One corpus whose replays share a stamp within
+  each session, shuffled twelve times, produced twelve different intervals. It
+  imposes the same tie-break the verification does now.
 - `forge diagnose` and the served panel could reach different verdicts about one
   journal. Verification split the corpus in whatever order its caller happened to
   hold it — alphabetical by replay file name on the command line, chronological
@@ -363,6 +385,14 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   entries are ordered inside the verification now, by when they were played and
   then by file name, so two replays sharing a timestamp cannot hand the decision
   back to the caller either.
+- Every beatmap background was blocked after a successful download. The endpoint
+  wants the session token, which cannot ride on an `<img src>`, so the page
+  fetches the image with the header and hands the response to the element as an
+  object URL — and the policy allowed `img-src 'self' data:` only, so the browser
+  refused to paint what it had just fetched. On the page that reads as a map with
+  no background rather than as anything failing. The policy admits `blob:` now,
+  which grants nothing further: only same-origin script can mint one, and
+  `script-src` allows no script this page did not ship with.
 - The corpus panel threw away the verification whenever the current-epoch corpus
   was too thin to diagnose. The diagnosis wants ten replays across three sessions
   and the comparison wants five across two a side, so the window where the panel

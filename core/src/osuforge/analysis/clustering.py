@@ -41,6 +41,18 @@ Two paths, deliberately, because each fails in a way the other does not:
 Where the two disagree, :func:`estimate` reports **the wider interval**. Two
 methods disagreeing means at least one of their assumptions does not hold here,
 and the correct response to that is a wider interval, not a choice.
+
+# The interval on a difference is built here too
+
+The same two routes answer "how far did it move across this boundary", and
+:func:`difference_interval` is the only place that puts an interval on
+`after - before`. It lives here rather than beside either caller because
+:mod:`osuforge.analysis.progress` and :mod:`osuforge.analysis.verify` describe
+the same difference across the same boundary on the same screen, and two
+constructions of one quantity are two numbers free to disagree about it. The
+resampling underneath is :func:`hierarchical_draws`, which hands back the draws
+rather than an interval precisely so that one side's own interval and its
+contribution to the difference come out of the same resampling.
 """
 
 from __future__ import annotations
@@ -62,7 +74,9 @@ __all__ = [
     "Inclusion",
     "ReplaySample",
     "assign_sessions",
+    "difference_interval",
     "estimate",
+    "hierarchical_draws",
     "select",
     "welch_difference_ci",
 ]
@@ -398,20 +412,34 @@ def welch_difference_ci(
     return (difference - half, difference + half)
 
 
-def _hierarchical_bootstrap(
+def hierarchical_draws(
     samples: list[ReplaySample],
     *,
     resamples: int,
     seed: int,
-) -> tuple[float, float]:
-    """Resample sessions, then replays, then hits."""
+) -> np.ndarray | None:
+    """Resample sessions, then replays within them, then hits within those.
+
+    Returns the draws rather than an interval, because the two things built out
+    of this resampling want it at different stages: one side's own interval
+    wants the quantiles of these means, and an interval on a difference wants
+    the draws themselves so it can subtract one side's from the other's before
+    quantiling. A function that returned only the quantiles would force the
+    second caller to write the loop again, and a second loop is a second answer
+    to "what does the bootstrap say" that nothing would keep in step with this
+    one.
+
+    `None` below two sessions rather than a degenerate interval. Resampling one
+    session with replacement draws that session every time, so what comes back
+    describes the replays inside one sitting and not the player.
+    """
     by_session: dict[int, list[np.ndarray]] = defaultdict(list)
     for sample in samples:
         if sample.n:
             by_session[sample.session].append(np.asarray(sample.errors, dtype=float))
     sessions = list(by_session.values())
     if len(sessions) < 2:
-        return (math.nan, math.nan)
+        return None
 
     rng = np.random.default_rng(seed)
     means = np.empty(resamples, dtype=float)
@@ -425,10 +453,79 @@ def _hierarchical_bootstrap(
                 errors = replays[pick]
                 pieces.append(rng.choice(errors, size=errors.size, replace=True))
         means[draw] = float(np.concatenate(pieces).mean())
+    return means
 
-    tail = (1.0 - _CONFIDENCE) / 2.0
-    low, high = np.quantile(means, [tail, 1.0 - tail])
+
+def _quantile_interval(draws: np.ndarray, *, confidence: float) -> tuple[float, float]:
+    tail = (1.0 - confidence) / 2.0
+    low, high = np.quantile(draws, [tail, 1.0 - tail])
     return (float(low), float(high))
+
+
+def _wider(
+    candidates: tuple[tuple[tuple[float, float], str], ...],
+) -> tuple[float, float, str]:
+    """The widest interval that holds, and which route produced it.
+
+    `(nan, nan, "none")` when none of them hold — which is a different answer
+    from a wide interval and has to stay distinguishable from one.
+    """
+    usable = [
+        (interval[1] - interval[0], interval, source)
+        for interval, source in candidates
+        if math.isfinite(interval[0]) and math.isfinite(interval[1])
+    ]
+    if not usable:
+        return (math.nan, math.nan, "none")
+    _, interval, source = max(usable, key=lambda item: item[0])
+    return (interval[0], interval[1], source)
+
+
+def difference_interval(
+    before: list[ReplaySample],
+    after: list[ReplaySample],
+    *,
+    seed: int,
+    resamples: int,
+    confidence: float = _CONFIDENCE,
+) -> tuple[float, float, str]:
+    """The interval on `after - before`, and which route it came from.
+
+    The only construction of it. :mod:`osuforge.analysis.progress` prints this
+    interval under a settings change and :mod:`osuforge.analysis.verify` reads
+    the same interval to decide whether the change did what it predicted, on
+    the same corpus and often on the same screen; when they built it separately
+    they put different numbers on one difference, and one of them decided a
+    verdict.
+
+    The bootstrap route draws each side from its own generator — `seed` for the
+    before side, `seed + 1` for the after — and differences the draws
+    elementwise, rather than alternating both sides down one stream. Two
+    reasons. The sides are disjoint sets of sessions, so nothing about the draw
+    that produced one side's mean should reach the other's. And with these
+    seeds the draws behind the difference are the same draws :func:`estimate`
+    already made for each side's own interval, so the per-side intervals on a
+    panel and the interval on the difference beneath them come out of one
+    resampling instead of two unrelated ones that a reader would have to
+    reconcile.
+
+    The source comes back `none` when neither route holds: fewer than two
+    sessions on a side stops both, and session means that all sit on their own
+    side's mean stop the cluster route alone. See :func:`welch_difference_ci`
+    and :func:`hierarchical_draws` for what each refusal means.
+    """
+    bootstrap = (math.nan, math.nan)
+    draws_before = hierarchical_draws(before, resamples=resamples, seed=seed)
+    draws_after = hierarchical_draws(after, resamples=resamples, seed=seed + 1)
+    if draws_before is not None and draws_after is not None:
+        bootstrap = _quantile_interval(draws_after - draws_before, confidence=confidence)
+
+    return _wider(
+        (
+            (welch_difference_ci(before, after, confidence=confidence), "cluster"),
+            (bootstrap, "bootstrap"),
+        )
+    )
 
 
 def estimate(
@@ -480,19 +577,12 @@ def estimate(
         critical = float(stats.t.ppf(1.0 - (1.0 - _CONFIDENCE) / 2.0, n_sessions - 1))
         cluster_ci = (mean - critical * se_cluster, mean + critical * se_cluster)
 
-    bootstrap_ci = _hierarchical_bootstrap(usable, resamples=resamples, seed=seed)
+    draws = hierarchical_draws(usable, resamples=resamples, seed=seed)
+    bootstrap_ci = (
+        (math.nan, math.nan) if draws is None else _quantile_interval(draws, confidence=_CONFIDENCE)
+    )
 
-    candidates = [(cluster_ci, "cluster"), (bootstrap_ci, "bootstrap")]
-    widths = [
-        (high - low, interval, source)
-        for interval, source in candidates
-        if math.isfinite(interval[0]) and math.isfinite(interval[1])
-        for low, high in [interval]
-    ]
-    if widths:
-        _, interval, source = max(widths, key=lambda item: item[0])
-    else:
-        interval, source = (math.nan, math.nan), "none"
+    low, high, source = _wider(((cluster_ci, "cluster"), (bootstrap_ci, "bootstrap")))
 
     session_means = [
         float(values[clusters == c].mean()) for c in sorted(np.unique(clusters).tolist())
@@ -500,8 +590,8 @@ def estimate(
 
     return ClusteredMean(
         mean=mean,
-        ci_low=interval[0],
-        ci_high=interval[1],
+        ci_low=low,
+        ci_high=high,
         ci_source=source,
         se_cluster=se_cluster,
         se_naive=se_naive,

@@ -35,18 +35,13 @@ under the new settings" is an instruction and an empty panel is not.
 # The difference carries its own interval
 
 Same posture as :func:`osuforge.analysis.clustering.estimate`, for the same
-reason. Two routes to the interval on `after - before`:
-
-1. The cluster route,
-   :func:`osuforge.analysis.clustering.welch_difference_ci`, which lives there
-   rather than here because :mod:`osuforge.analysis.verify` reports an
-   interval on the same difference and must build it the same way.
-2. A hierarchical bootstrap on each side — sessions, then replays, then hits —
-   differenced draw by draw.
-
-Where they disagree, the wider interval is reported. Two methods disagreeing
-means an assumption does not hold here, and the correct response is a wider
-interval, not a choice.
+reason, and out of the same code:
+:func:`osuforge.analysis.clustering.difference_interval` builds it from a
+cluster route and a hierarchical bootstrap and reports the wider of the two.
+The construction lives there rather than here because
+:mod:`osuforge.analysis.verify` reports an interval on the same difference
+across the same boundary, and a second construction of it is a second number
+free to disagree on the same screen.
 
 Spread is reported per side and left as a description. A difference of
 standard deviations needs its own estimator to carry an honest interval, and
@@ -67,9 +62,9 @@ from osuforge.analysis.clustering import (
     BOOTSTRAP_RESAMPLES,
     ClusteredMean,
     ReplaySample,
+    difference_interval,
     estimate,
     select,
-    welch_difference_ci,
 )
 from osuforge.analysis.corpus import Entry
 
@@ -92,8 +87,6 @@ It buys a wide interval, and the width is the honest part.
 
 MIN_SIDE_REPLAYS = 5
 """Replays each side needs alongside its sessions."""
-
-_CONFIDENCE = 0.95
 
 
 @dataclass(frozen=True, slots=True)
@@ -282,35 +275,6 @@ def _midpoint_boundary(entries: list[Entry]) -> tuple[datetime, str] | None:
     )
 
 
-def _bootstrap_means(
-    samples: list[ReplaySample], *, resamples: int, seed: int
-) -> np.ndarray | None:
-    """One side's bootstrap distribution of the mean. Sessions, then replays,
-    then hits — the same resampling the pooled estimate uses, kept here so the
-    draws can be differenced against the other side's."""
-    by_session: dict[int, list[np.ndarray]] = defaultdict(list)
-    for sample in samples:
-        if sample.n:
-            by_session[sample.session].append(np.asarray(sample.errors, dtype=float))
-    sessions = list(by_session.values())
-    if len(sessions) < 2:
-        return None
-
-    rng = np.random.default_rng(seed)
-    means = np.empty(resamples, dtype=float)
-    for draw in range(resamples):
-        chosen = rng.integers(0, len(sessions), len(sessions))
-        pieces = []
-        for index in chosen:
-            replays = sessions[index]
-            picks = rng.integers(0, len(replays), len(replays))
-            for pick in picks:
-                errors = replays[pick]
-                pieces.append(rng.choice(errors, size=errors.size, replace=True))
-        means[draw] = float(np.concatenate(pieces).mean())
-    return means
-
-
 def _spread(entries: list[Entry]) -> float:
     errors = [error for entry in entries for error in entry.errors]
     return float(np.std(np.array(errors), ddof=1)) if len(errors) > 1 else math.nan
@@ -348,30 +312,15 @@ def _compare(
 
     # Different seeds on purpose: the sides are independent, and resampling
     # both with the same stream would correlate draws that the difference
-    # then wrongly cancels.
+    # then wrongly cancels. `difference_interval` uses the same two seeds, so
+    # the draws behind the interval below are these same draws.
     estimated_before = estimate(kept_before, seed=seed, resamples=resamples)
     estimated_after = estimate(kept_after, seed=seed + 1, resamples=resamples)
     difference = estimated_after.mean - estimated_before.mean
 
-    cluster_ci = welch_difference_ci(kept_before, kept_after, confidence=_CONFIDENCE)
-
-    bootstrap_ci = (math.nan, math.nan)
-    draws_before = _bootstrap_means(kept_before, resamples=resamples, seed=seed)
-    draws_after = _bootstrap_means(kept_after, resamples=resamples, seed=seed + 1)
-    if draws_before is not None and draws_after is not None:
-        deltas = draws_after - draws_before
-        tail = (1.0 - _CONFIDENCE) / 2.0
-        low, high = np.quantile(deltas, [tail, 1.0 - tail])
-        bootstrap_ci = (float(low), float(high))
-
-    widths = [
-        (interval[1] - interval[0], interval, source)
-        for interval, source in ((cluster_ci, "cluster"), (bootstrap_ci, "bootstrap"))
-        if math.isfinite(interval[0]) and math.isfinite(interval[1])
-    ]
-    if not widths:
+    low, high, source = difference_interval(kept_before, kept_after, seed=seed, resamples=resamples)
+    if source == "none":
         return "neither route to an interval on the difference holds up on this split"
-    _, interval, source = max(widths, key=lambda item: item[0])
 
     return Shift(
         before=estimated_before,
@@ -379,8 +328,8 @@ def _compare(
         spread_before=_spread(before),
         spread_after=_spread(after),
         difference=difference,
-        ci_low=interval[0],
-        ci_high=interval[1],
+        ci_low=low,
+        ci_high=high,
         ci_source=source,
     )
 
@@ -402,7 +351,12 @@ def progress(
     if not entries:
         return Progress(points=[], insufficient="nothing to chart yet")
 
-    ordered = sorted(entries, key=lambda entry: entry.played_at)
+    # The file name breaks ties because `sorted` is stable, so replays sharing
+    # a timestamp would otherwise be left in the caller's order, and the
+    # bootstrap walks its generator out of the order it is handed. The long
+    # version of this argument is in
+    # :func:`osuforge.analysis.verification.verify_boundary`.
+    ordered = sorted(entries, key=lambda entry: (entry.played_at, entry.replay))
     kept = _kept(ordered)
     points = _series(kept)
 

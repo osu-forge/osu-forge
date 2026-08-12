@@ -8,21 +8,56 @@ for itself.
 
 from __future__ import annotations
 
+from datetime import UTC, datetime, timedelta
+
 import numpy as np
 import pytest
 
-from osuforge.analysis.clustering import ReplaySample, welch_difference_ci
+from osuforge.analysis.clustering import (
+    ReplaySample,
+    hierarchical_draws,
+    welch_difference_ci,
+)
+from osuforge.analysis.corpus import Entry
+from osuforge.analysis.progress import progress
+from osuforge.analysis.verification import verify_boundary
 from osuforge.analysis.verify import (
     AGREEMENT_TOLERANCE,
     MIN_REPLAYS_PER_SIDE,
     MIN_SESSIONS_PER_SIDE,
     Boundary,
     Verdict,
-    _bootstrap_difference_ci,
     compare,
 )
 
 FAST = {"resamples": 600}
+
+START = datetime(2026, 7, 1, 19, 0, tzinfo=UTC)
+BEFORE_EPOCH = "aaaa000000000000"
+AFTER_EPOCH = "bbbb111111111111"
+RECORDED = {BEFORE_EPOCH: {"Offset": "0"}, AFTER_EPOCH: {"Offset": "7"}}
+SHARED = {"seed": 0, "resamples": 800}
+
+
+def bootstrap_route(
+    before: list[ReplaySample],
+    after: list[ReplaySample],
+    *,
+    seed: int,
+    resamples: int,
+) -> tuple[float, float]:
+    """The bootstrap route on its own.
+
+    `difference_interval` only reports it where it is the wider of the two, so
+    a test that wants to say what this route alone concluded has to ask it
+    directly — with the seeds the shared construction uses, or it is answering
+    about a resampling nothing runs.
+    """
+    draws_before = hierarchical_draws(before, resamples=resamples, seed=seed)
+    draws_after = hierarchical_draws(after, resamples=resamples, seed=seed + 1)
+    assert draws_before is not None and draws_after is not None
+    low, high = np.quantile(draws_after - draws_before, [0.025, 0.975])
+    return (float(low), float(high))
 
 
 def side(
@@ -50,6 +85,51 @@ def boundary(
         after=side(mean=after_mean, seed=2, **kwargs),
         changed={} if offset is None else {"Offset": offset},
     )
+
+
+def era(
+    *,
+    mean: float,
+    sessions: int,
+    first_session: int = 0,
+    replays: int = 3,
+    hits: int = 150,
+    seed: int,
+) -> list[Entry]:
+    """One settings era as a caller hands it over: sessions a day apart,
+    replays minutes apart inside them."""
+    rng = np.random.default_rng(seed)
+    return [
+        Entry(
+            replay=f"s{first_session + offset}r{index}.osr",
+            beatmap_hash="map-a",
+            beatmap="Artist - Title [map-a]",
+            played_at=START + timedelta(days=first_session + offset, minutes=5 * index),
+            session=first_session + offset,
+            errors=rng.normal(mean, 12.0, hits).tolist(),
+            miss_rate=0.02,
+            accuracy=0.97,
+            breaks=1,
+        )
+        for offset in range(sessions)
+        for index in range(replays)
+    ]
+
+
+def crossed() -> tuple[list[Entry], dict[str, str]]:
+    """+8 ms before a recorded offset change and +1 ms after, four sessions a side.
+
+    Sized so the bootstrap is the wider route and therefore the reported one.
+    The cluster route has been shared since it moved into `clustering`, so a
+    corpus that route won would agree across both roads whatever the bootstrap
+    did — and would have agreed before the bootstrap was shared as well, which
+    is a test of nothing.
+    """
+    before = era(mean=8.0, sessions=4, seed=3)
+    after = era(mean=1.0, sessions=4, first_session=4, seed=13)
+    epochs = {entry.replay: BEFORE_EPOCH for entry in before}
+    epochs |= {entry.replay: AFTER_EPOCH for entry in after}
+    return before + after, epochs
 
 
 def drifting_side(
@@ -212,7 +292,7 @@ class TestTheWiderRoute:
         # Asserted first, so the tests below pin which route won rather than a
         # corpus that was never measurable by either.
         drifted = drifting_boundary()
-        _, high = _bootstrap_difference_ci(drifted.before, drifted.after, seed=0, **FAST)
+        _, high = bootstrap_route(drifted.before, drifted.after, seed=0, **FAST)
         assert high < 0.0
 
     def test_the_cluster_route_does_not(self) -> None:
@@ -230,6 +310,46 @@ class TestTheWiderRoute:
         drifted = drifting_boundary()
         result = compare(drifted, **FAST)
         assert (result.ci_low, result.ci_high) == welch_difference_ci(drifted.before, drifted.after)
+
+
+class TestOneConstruction:
+    """The interval the progress panel prints and the interval this module
+    scores are one interval, to the last decimal.
+
+    They describe the same difference across the same boundary of the same
+    corpus, and a reader sees both at once. The cluster route was already
+    shared; the bootstrap was not, and each road built it differently — two
+    independent streams differenced elementwise here, both sides alternating
+    down one stream there, over 10,000 resamples on one road and 4,000 on the
+    other. Neither is wrong in isolation, which is why it survived: the
+    disagreement is only visible when the two numbers are put beside each
+    other, and that is what this does.
+    """
+
+    def scored(self) -> tuple[float, float, float, float]:
+        entries, epochs = crossed()
+        across = progress(entries, epochs=epochs, **SHARED)
+        assert across.shift is not None, "four sessions a side is enough to compare"
+        verified = verify_boundary(entries, across, RECORDED, **SHARED)
+        assert verified is not None, "the boundary is a recorded settings change"
+        comparison, unrecorded = verified
+        assert unrecorded is None, "the settings behind both fingerprints are recorded"
+        return (across.shift.ci_low, across.shift.ci_high, comparison.ci_low, comparison.ci_high)
+
+    def test_the_bootstrap_route_is_the_one_reported(self) -> None:
+        # Asserted first, so the test below pins the route that was written
+        # twice rather than the one that was already shared.
+        entries, epochs = crossed()
+        across = progress(entries, epochs=epochs, **SHARED)
+        assert across.shift is not None
+        assert across.shift.ci_source == "bootstrap"
+
+    def test_both_blocks_report_the_same_interval(self) -> None:
+        # Exactly equal rather than close: two constructions that agree to a
+        # decimal place are still two constructions, and the next corpus is
+        # where they stop agreeing.
+        progress_low, progress_high, verified_low, verified_high = self.scored()
+        assert (verified_low, verified_high) == (progress_low, progress_high)
 
 
 class TestReporting:
