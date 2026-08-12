@@ -1,26 +1,33 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AnalysisPanel } from "@/components/Analysis";
-import { CorpusPanel } from "@/components/Corpus";
 import { KeyOverlay } from "@/components/KeyOverlay";
 import { KeysPanel } from "@/components/KeysPanel";
 import { LiveHud } from "@/components/LiveHud";
+import { Failure } from "@/components/Parts";
 import { Playfield } from "@/components/Playfield";
 import { ErrorTimeline } from "@/components/ErrorTimeline";
-import { DEFAULT_LOCALE, detectLocale, translator, type Locale } from "@/i18n";
+import { monthDay, stamp } from "@/lib/format";
+import { failureText, useLocale } from "@/lib/session";
 import {
+  accuracyOf,
   client,
   MOD_HIDDEN,
   modNames,
-  ProtocolError,
+  newestPlay,
   sampleAt,
-  type Corpus,
   type Entry,
   type ReplayHeader,
   type Samples,
 } from "@/lib/protocol";
 
 /**
- * The one island on the page.
+ * The viewer, and the one island on its page.
+ *
+ * Everything a review needs is here and stays here, which is the whole reason
+ * this is one island on one route: the clock, the track, the selection and the
+ * keyboard map all die on a navigation, so anything a reviewer reaches for
+ * mid-replay has to be reachable without leaving. Nothing on the other three
+ * pages is.
  *
  * The clock is held in a ref and mirrored into state once per animation frame,
  * rather than being state that every play tick writes. Sixty state updates a
@@ -35,23 +42,14 @@ interface Loaded {
   backdrop: string | null;
 }
 
-/** The game's own accuracy formula, from the counts every header carries. */
-function accuracyOf(counts: ReplayHeader["counts"]): number {
-  const total = counts["300"] + counts["100"] + counts["50"] + counts.miss;
-  if (total === 0) return 0;
-  return (300 * counts["300"] + 100 * counts["100"] + 50 * counts["50"]) / (300 * total);
-}
+/** What a link into this page puts the replay's name behind. `Play.tsx` writes
+ *  it and `Overview.tsx` forwards the single-page version of it here. */
+const FRAGMENT = "#r=";
 
 /** `MM-DD` from the analysis timestamp, or nothing when the play has none. */
 function playedDay(entry: Entry): string | null {
   const at = entry.header.analysis?.played_at;
-  return at ? at.slice(5, 10) : null;
-}
-
-/** `m:ss` from milliseconds of recording, clamped so a pre-start clock reads 0:00. */
-function stamp(ms: number): string {
-  const seconds = Math.max(0, Math.floor(ms / 1000));
-  return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}`;
+  return at ? monthDay(at) : null;
 }
 
 /**
@@ -80,10 +78,9 @@ function stamp(ms: number): string {
  */
 const DRIFT_TOLERANCE = 0.05;
 
-export function App({ token }: { token: string }) {
+export function ReplayViewer({ token }: { token: string }) {
   const api = useMemo(() => client(token), [token]);
-  const [locale, setLocale] = useState<Locale>(DEFAULT_LOCALE);
-  const t = useMemo(() => translator(locale), [locale]);
+  const t = useLocale();
 
   const [entries, setEntries] = useState<Entry[] | null>(null);
   const [selected, setSelected] = useState<string | null>(null);
@@ -94,14 +91,6 @@ export function App({ token }: { token: string }) {
   const [arrived, setArrived] = useState<string | null>(null);
   const [loaded, setLoaded] = useState<Loaded | null>(null);
   const [failure, setFailure] = useState<string | null>(null);
-
-  /** `null` until the server has an answer — the entry point stays hidden
-   *  rather than opening onto an empty panel. */
-  const [corpus, setCorpus] = useState<Corpus | null>(null);
-  const [corpusAt, setCorpusAt] = useState<Date | null>(null);
-  const [view, setView] = useState<"replay" | "corpus">(() =>
-    typeof location !== "undefined" && location.hash === "#corpus" ? "corpus" : "replay",
-  );
   const [query, setQuery] = useState("");
 
   const [playing, setPlaying] = useState(false);
@@ -138,72 +127,82 @@ export function App({ token }: { token: string }) {
   const [revealHidden, setRevealHidden] = useState(false);
 
   useEffect(() => {
-    setLocale(detectLocale(navigator.languages ?? [navigator.language]));
-  }, []);
-
-  useEffect(() => {
+    // Read here, on the way into the fetch, and not out of `location` when it
+    // answers. The address the document was opened with is what a deep link
+    // means, and by the time a listing comes back the page has had a chance to
+    // write the address itself — so a fragment read late is a fragment read
+    // after this page's own bookkeeping, which is not what anybody linked to.
+    const linkedTo = location.hash.startsWith(FRAGMENT)
+      ? decodeURIComponent(location.hash.slice(FRAGMENT.length))
+      : null;
     api
       .list()
       .then((found) => {
         setEntries(found);
         // A deep link names the play to open on; without one, the newest.
-        const wanted = decodeURIComponent(location.hash.replace(/^#r=/, ""));
-        const linked = location.hash.startsWith("#r=")
-          ? found.find((entry) => entry.name === wanted)
-          : undefined;
+        const linked =
+          linkedTo === null ? undefined : found.find((entry) => entry.name === linkedTo);
+        const fallback = newestPlay(found) ?? found[0];
         if (linked) setSelected(linked.name);
-        else if (found.length > 0) setSelected(found[0]!.name);
+        else if (fallback) setSelected(fallback.name);
       })
-      .catch((error: unknown) => {
-        setFailure(
-          error instanceof ProtocolError && error.message === "unauthorised"
-            ? t("error.unauthorised")
-            : t("error.unreachable"),
-        );
-      });
+      .catch((error: unknown) => setFailure(failureText(error, t)));
   }, [api, t]);
 
-  // The address mirrors the view, so a refresh restores it and an OBS scene
-  // can point at the corpus (or one replay) and stay there. `replaceState`
-  // rather than assignment: browsing plays must not bury the back button.
+  // The address names the open replay, so a refresh restores it and an OBS
+  // scene can point at one play and stay there. `replaceState` rather than
+  // assignment: browsing plays must not bury the back button, and the button
+  // now has somewhere else to go — the page this one was navigated to from.
+  //
+  // Nothing is written while nothing is selected. `null` there means "not
+  // decided yet" rather than "nothing is open", and this effect runs once in
+  // that state — on mount, before the listing that decides it has arrived. A
+  // write then is the page clearing the very fragment it is about to be asked
+  // to honour, which reads afterwards as a deep link that opened the wrong
+  // play. The state never returns to `null` once a replay has been chosen, so
+  // there is no case where an address needs clearing and does not get it.
   useEffect(() => {
-    const hash =
-      view === "corpus" ? "#corpus" : selected ? `#r=${encodeURIComponent(selected)}` : "";
-    history.replaceState(null, "", hash || location.pathname);
-  }, [view, selected]);
+    if (!selected) return;
+    history.replaceState(null, "", `${FRAGMENT}${encodeURIComponent(selected)}`);
+  }, [selected]);
 
-  // Fetched once; after that the server pushes a fresh answer whenever a new
-  // play changes it. Failure leaves the panel absent rather than the page
-  // broken — the corpus is an extra reading, not the page's spine.
+  // A link from one play to another inside this same page changes the address
+  // without loading anything, because only the fragment differs — so nothing
+  // above runs and the address ends up naming a play that is not the one open.
+  // That is the bug fixed above, arriving from the other direction. The cards
+  // on the overview and the session page link this way, and following one from
+  // the viewer is the ordinary case rather than a corner of it.
   useEffect(() => {
-    api
-      .corpus()
-      .then((found) => {
-        setCorpus(found);
-        if (found) setCorpusAt(new Date());
-      })
-      .catch(() => setCorpus(null));
-  }, [api]);
+    const followed = () => {
+      if (!location.hash.startsWith(FRAGMENT)) return;
+      const named = decodeURIComponent(location.hash.slice(FRAGMENT.length));
+      // Only a play this page is holding. A fragment naming something that is
+      // not in the listing is a stale link, and the honest response is to
+      // leave open what is open rather than to blank the viewer.
+      setEntries((held) => {
+        if (held?.some((entry) => entry.name === named)) setSelected(named);
+        return held;
+      });
+    };
+    window.addEventListener("hashchange", followed);
+    return () => window.removeEventListener("hashchange", followed);
+  }, []);
 
   // A play that finishes while the page is open is inserted, and nothing else
   // moves. That is the whole difference from a page that reloads itself: the
   // scroll position, the open selection and the playback clock all survive,
-  // and those are what made the reloading version unusable.
+  // and those are what made the reloading version unusable. The corpus half of
+  // this socket belongs to the pages that show a corpus; this one is watching
+  // for something to review.
   useEffect(() => {
-    return api.watch(
-      (entry) => {
-        setEntries((current) => {
-          const existing = current ?? [];
-          if (existing.some((item) => item.name === entry.name)) return existing;
-          return [entry, ...existing];
-        });
-        setArrived(entry.name);
-      },
-      (fresh) => {
-        setCorpus(fresh);
-        setCorpusAt(new Date());
-      },
-    );
+    return api.watch((entry) => {
+      setEntries((current) => {
+        const existing = current ?? [];
+        if (existing.some((item) => item.name === entry.name)) return existing;
+        return [entry, ...existing];
+      });
+      setArrived(entry.name);
+    });
   }, [api]);
 
   useEffect(() => {
@@ -430,7 +429,7 @@ export function App({ token }: { token: string }) {
   // being looked for, and a mouse cannot land on it.
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
-      if (view !== "replay" || !loaded) return;
+      if (!loaded) return;
       const target = event.target as HTMLElement | null;
       const tag = target?.tagName;
       if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
@@ -503,15 +502,9 @@ export function App({ token }: { token: string }) {
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [view, loaded, seek, toggle]);
+  }, [loaded, seek, toggle]);
 
-  if (failure) {
-    return (
-      <div className="p-4xl">
-        <p className="text-body-lg text-body">{failure}</p>
-      </div>
-    );
-  }
+  if (failure) return <Failure text={failure} />;
 
   const header = loaded?.header;
   const rate = header?.rate || 1;
@@ -525,23 +518,11 @@ export function App({ token }: { token: string }) {
   });
 
   return (
-    <div className="grid h-screen grid-cols-1 grid-rows-[auto_1fr] md:grid-cols-[300px_1fr] md:grid-rows-1">
-      <nav className="hairline-b max-h-[38vh] overflow-y-auto md:hairline-r md:max-h-none md:border-b-0">
-        {corpus && (
-          <button
-            type="button"
-            onClick={() => setView("corpus")}
-            aria-current={view === "corpus"}
-            className="hairline-b block w-full cursor-pointer px-lg py-md text-left aria-[current=true]:bg-canvas-card hover:bg-canvas-card"
-          >
-            <div className="eyebrow">{t("corpus.title")}</div>
-            <div className="mt-xxs text-body-sm text-body">
-              {corpus.insufficient
-                ? t("corpus.collecting")
-                : t("corpus.subtitle", { n: corpus.replays, s: corpus.sessions })}
-            </div>
-          </button>
-        )}
+    // `h-full` rather than `h-screen`: the page layout above this has already
+    // spent the navigation's height, and a child asking for the whole viewport
+    // inside it would push the transport off the bottom by exactly that much.
+    <div className="grid h-full grid-cols-1 grid-rows-[auto_1fr] md:grid-cols-[300px_1fr] md:grid-rows-1">
+      <div className="hairline-b max-h-[38vh] overflow-y-auto md:hairline-r md:max-h-none md:border-b-0">
         <div className="hairline-b px-lg py-md">
           <div className="eyebrow">{t("nav.replays")}</div>
           <div className="text-body-sm text-body">
@@ -564,11 +545,8 @@ export function App({ token }: { token: string }) {
           <button
             key={entry.name}
             type="button"
-            onClick={() => {
-              setSelected(entry.name);
-              setView("replay");
-            }}
-            aria-current={view === "replay" && entry.name === selected}
+            onClick={() => setSelected(entry.name)}
+            aria-current={entry.name === selected}
             className="hairline-b block w-full cursor-pointer px-lg py-md text-left text-body-sm aria-[current=true]:bg-canvas-card hover:bg-canvas-card"
           >
             <div className="truncate text-ink">
@@ -603,250 +581,238 @@ export function App({ token }: { token: string }) {
         {entries?.length === 0 && (
           <p className="px-lg py-md text-body-sm text-mute">{t("replays.empty")}</p>
         )}
-      </nav>
+      </div>
 
       <section className="flex min-h-0 min-w-0 flex-col overflow-y-auto md:overflow-y-visible">
-        <header className="hairline-b flex items-baseline gap-lg px-xl py-md">
-          <h1 className="text-display-xs">{t("app.title")}</h1>
-          {view === "corpus" ? (
-            <span className="truncate text-body-sm text-body">{t("corpus.axes")}</span>
-          ) : (
-            header && (
-              <span className="flex min-w-0 items-baseline gap-sm">
-                <span className="truncate text-body-sm text-body">
-                  {header.beatmap.artist} — {header.beatmap.title} [{header.beatmap.version}]
-                </span>
-                {badges.length > 0 && (
-                  <span className="shrink-0 font-mono text-body-sm text-[color:var(--color-accent-breeze)]">
-                    {badges.join(" ")}
-                  </span>
-                )}
+        {/* What is on the field, and nothing else. The tool's name and its one
+            claim about itself are in the navigation above this now, said once
+            per page rather than once per panel. */}
+        {header && (
+          <header className="hairline-b flex min-w-0 items-baseline gap-sm px-xl py-md">
+            <span className="truncate text-body-sm text-body">
+              {header.beatmap.artist} — {header.beatmap.title} [{header.beatmap.version}]
+            </span>
+            {badges.length > 0 && (
+              <span className="shrink-0 font-mono text-body-sm text-[color:var(--color-accent-breeze)]">
+                {badges.join(" ")}
               </span>
-            )
-          )}
-          <span className="eyebrow ml-auto">{t("app.advisory")}</span>
-        </header>
+            )}
+          </header>
+        )}
 
-        {/* Outside the view switch, because the clock is: crossing to the
-            corpus and back leaves the replay running, and a track torn down
-            and rebuilt on the way would come back somewhere else. No
-            `controls` either — a second transport with its own idea of the
-            position is exactly how the sound ends up ahead of the picture.
-            Hidden explicitly because Tailwind's preflight gives every `audio`
-            element `display: block`, which puts a zero-height flex item in
-            this column for something that has nothing to show. Display has no
-            bearing on whether it plays. */}
+        {/* Outside everything that comes and goes with the selection, because
+            the clock is: this element survives a panel appearing beside it, and
+            a track torn down and rebuilt would come back somewhere else. It
+            does not survive a navigation, which is the reason this route holds
+            everything a review needs. No `controls` either — a second transport
+            with its own idea of the position is exactly how the sound ends up
+            ahead of the picture. Hidden explicitly because Tailwind's preflight
+            gives every `audio` element `display: block`, which puts a
+            zero-height flex item in this column for something that has nothing
+            to show. Display has no bearing on whether it plays. */}
         {song !== null && <audio ref={audio} src={song} muted={muted} className="hidden" />}
 
-        {view === "corpus" ? (
-          <div className="min-h-0 flex-1 overflow-y-auto">
-            <CorpusPanel corpus={corpus} updatedAt={corpusAt} t={t} />
-          </div>
-        ) : (
-          <>
-            <div className="grid min-h-0 flex-1 grid-cols-1 lg:grid-cols-[1fr_380px]">
-              <div className="relative min-h-0 overflow-hidden">
-                {loaded?.backdrop && (
-                  // Dim enough that the field stays the subject; the image is
-                  // orientation, not decoration.
-                  <img
-                    src={loaded.backdrop}
-                    alt=""
-                    className="absolute inset-0 h-full w-full object-cover opacity-15"
-                  />
-                )}
-                {loaded && (
-                  <Playfield
-                    header={loaded.header}
-                    samples={loaded.samples}
-                    paths={loaded.paths}
-                    clock={clock}
-                    hidden={playedHidden && !revealHidden}
-                  />
-                )}
-                {/* The field plays and pauses on a click, the way a video does,
-                    and what does it is a transparent button laid over the field
-                    rather than a role on the box that holds it. `role="button"`
-                    on the container was the shorter way to write the same thing
-                    and it makes every descendant presentational: the HUD's
-                    labelled accuracy readout and its error bar leave the
-                    accessibility tree entirely, still on screen and no longer
-                    announced. The same wrapping is what forced a click on the
-                    container to carry a list of tags it must not swallow a
-                    press for — a list that fails open, since anything it does
-                    not name both acts and toggles, and that cannot be given
-                    `[role='button']` without naming the container itself. A
-                    sibling neither hides the content nor stands between it and
-                    the pointer, so both problems are gone rather than guarded.
-                    It exists only while a replay does: a tab stop announcing
-                    "Play or pause the replay" over an empty field is a control
-                    that does nothing, said out loud. */}
-                {loaded && (
-                  <button
-                    type="button"
-                    onClick={toggle}
-                    aria-label={t("player.fieldToggle")}
-                    className="absolute inset-0 cursor-pointer"
-                  />
-                )}
-                {loaded && <LiveHud header={loaded.header} clock={clock} t={t} />}
-              </div>
-              <aside className="hairline-l min-h-0 overflow-y-auto border-l border-hairline">
-                {loaded && (
-                  <>
-                    <AnalysisPanel
-                      analysis={loaded.header.analysis}
-                      header={loaded.header}
-                      t={t}
-                      onSeek={seek}
-                    />
-                    {/* Below the analysis rather than inside it: the samples
-                        are always there, so this panel still has something to
-                        say about a play the analysis could not reproduce. */}
-                    <KeysPanel
-                      samples={loaded.samples}
-                      header={loaded.header}
-                      t={t}
-                      onSeek={seek}
-                    />
-                  </>
-                )}
-              </aside>
-            </div>
-
-            {loaded && (
-              <div className="hairline-t">
-                <ErrorTimeline
-                  header={loaded.header}
-                  clock={clock}
-                  onSeek={seek}
-                  loop={loop}
-                  t={t}
-                />
-                <div className="flex flex-wrap items-center gap-md px-lg py-md">
-                  <button
-                    type="button"
-                    onClick={toggle}
-                    className="cursor-pointer rounded-pill border border-hairline px-lg py-xs text-body-sm text-ink hover:text-ink-hover"
-                  >
-                    {playing
-                      ? t("player.pause")
-                      : clock >= bounds.current[1]
-                        ? t("player.replay")
-                        : t("player.play")}
-                  </button>
-
-                  <div
-                    className="flex items-center gap-xs"
-                    role="group"
-                    aria-label={t("player.speed")}
-                  >
-                    {[0.25, 0.5, 1, 1.5, 2].map((rate) => (
-                      <button
-                        key={rate}
-                        type="button"
-                        onClick={() => setSpeed(rate)}
-                        aria-pressed={speed === rate}
-                        className={`cursor-pointer rounded-pill border px-sm py-xs font-mono text-body-sm tabular-nums ${
-                          speed === rate
-                            ? "border-[color:var(--color-accent-breeze)] text-[color:var(--color-accent-breeze)]"
-                            : "border-hairline text-mute hover:text-ink-hover"
-                        }`}
-                      >
-                        {rate}×
-                      </button>
-                    ))}
-                  </div>
-
-                  <span className="font-mono text-body-sm tabular-nums text-body">
-                    {stamp((clock - bounds.current[0]) / rate)} /{" "}
-                    {stamp((bounds.current[1] - bounds.current[0]) / rate)}
-                  </span>
-
-                  {/* Only while there is something to silence. A map that
-                      names no track, and one whose track did not arrive, are
-                      both plays with no sound, and a mute offered over them
-                      would be a control with nothing behind it. */}
-                  {song !== null && (
-                    <button
-                      type="button"
-                      onClick={() => setMuted((on) => !on)}
-                      aria-pressed={muted}
-                      className={`cursor-pointer rounded-pill border px-sm py-xs font-mono text-body-sm ${
-                        muted
-                          ? "border-[color:var(--color-accent-breeze)] text-[color:var(--color-accent-breeze)]"
-                          : "border-hairline text-mute hover:text-ink-hover"
-                      }`}
-                    >
-                      {t("player.mute")}
-                    </button>
-                  )}
-
-                  {playedHidden && (
-                    <button
-                      type="button"
-                      onClick={() => setRevealHidden((on) => !on)}
-                      aria-pressed={revealHidden}
-                      className={`cursor-pointer rounded-pill border px-sm py-xs font-mono text-body-sm ${
-                        revealHidden
-                          ? "border-[color:var(--color-accent-breeze)] text-[color:var(--color-accent-breeze)]"
-                          : "border-hairline text-mute hover:text-ink-hover"
-                      }`}
-                    >
-                      {t("player.revealHidden")}
-                    </button>
-                  )}
-
-                  {loop && (
-                    <button
-                      type="button"
-                      onClick={() => setLoop(null)}
-                      aria-label={t("player.loopClear")}
-                      className="cursor-pointer rounded-pill border border-[color:var(--color-accent-breeze)] px-sm py-xs font-mono text-body-sm tabular-nums text-[color:var(--color-accent-breeze)]"
-                    >
-                      A–B {stamp(loop[0] - bounds.current[0])}–{stamp(loop[1] - bounds.current[0])} ✕
-                    </button>
-                  )}
-
-                  {(loaded.header.analysis?.breaks.length ?? 0) > 0 && (
-                    <div className="flex items-center gap-xs">
-                      {([-1, 1] as const).map((direction) => {
-                        const breaks = loaded.header.analysis!.breaks;
-                        const target =
-                          direction === 1
-                            ? breaks.find((item) => item.time > clock + 80)
-                            : [...breaks].reverse().find((item) => item.time < clock - 1600);
-                        return (
-                          <button
-                            key={direction}
-                            type="button"
-                            disabled={!target}
-                            onClick={() => {
-                              if (!target) return;
-                              setPlaying(false);
-                              // Land shortly before the break — in experienced
-                              // time, so the run-up length does not depend on DT.
-                              seek(target.time - 1200 * rate);
-                            }}
-                            className="cursor-pointer rounded-pill border border-hairline px-sm py-xs text-body-sm text-mute hover:text-ink-hover disabled:cursor-default disabled:opacity-40"
-                          >
-                            {direction === -1 ? `‹ ${t("player.break")}` : `${t("player.break")} ›`}
-                          </button>
-                        );
-                      })}
-                    </div>
-                  )}
-
-                  <div className="ml-auto">
-                    <KeyOverlay samples={loaded.samples} clock={clock} />
-                  </div>
-                </div>
-                <p className="eyebrow max-w-[100ch] px-lg pb-md normal-case tracking-normal">
-                  {t("player.shortcuts")} — {t("player.samplesOnlyHelp")}
-                </p>
-              </div>
+        <div className="grid min-h-0 flex-1 grid-cols-1 lg:grid-cols-[1fr_380px]">
+          <div className="relative min-h-0 overflow-hidden">
+            {loaded?.backdrop && (
+              // Dim enough that the field stays the subject; the image is
+              // orientation, not decoration.
+              <img
+                src={loaded.backdrop}
+                alt=""
+                className="absolute inset-0 h-full w-full object-cover opacity-15"
+              />
             )}
-          </>
+            {loaded && (
+              <Playfield
+                header={loaded.header}
+                samples={loaded.samples}
+                paths={loaded.paths}
+                clock={clock}
+                hidden={playedHidden && !revealHidden}
+              />
+            )}
+            {/* The field plays and pauses on a click, the way a video does,
+                and what does it is a transparent button laid over the field
+                rather than a role on the box that holds it. `role="button"`
+                on the container was the shorter way to write the same thing
+                and it makes every descendant presentational: the HUD's
+                labelled accuracy readout and its error bar leave the
+                accessibility tree entirely, still on screen and no longer
+                announced. The same wrapping is what forced a click on the
+                container to carry a list of tags it must not swallow a
+                press for — a list that fails open, since anything it does
+                not name both acts and toggles, and that cannot be given
+                `[role='button']` without naming the container itself. A
+                sibling neither hides the content nor stands between it and
+                the pointer, so both problems are gone rather than guarded.
+                It exists only while a replay does: a tab stop announcing
+                "Play or pause the replay" over an empty field is a control
+                that does nothing, said out loud. */}
+            {loaded && (
+              <button
+                type="button"
+                onClick={toggle}
+                aria-label={t("player.fieldToggle")}
+                className="absolute inset-0 cursor-pointer"
+              />
+            )}
+            {loaded && <LiveHud header={loaded.header} clock={clock} t={t} />}
+          </div>
+          <aside className="hairline-l min-h-0 overflow-y-auto border-l border-hairline">
+            {loaded && (
+              <>
+                <AnalysisPanel
+                  analysis={loaded.header.analysis}
+                  header={loaded.header}
+                  t={t}
+                  onSeek={seek}
+                />
+                {/* Below the analysis rather than inside it: the samples
+                    are always there, so this panel still has something to
+                    say about a play the analysis could not reproduce. */}
+                <KeysPanel
+                  samples={loaded.samples}
+                  header={loaded.header}
+                  t={t}
+                  onSeek={seek}
+                />
+              </>
+            )}
+          </aside>
+        </div>
+
+        {loaded && (
+          <div className="hairline-t">
+            <ErrorTimeline
+              header={loaded.header}
+              clock={clock}
+              onSeek={seek}
+              loop={loop}
+              t={t}
+            />
+            <div className="flex flex-wrap items-center gap-md px-lg py-md">
+              <button
+                type="button"
+                onClick={toggle}
+                className="cursor-pointer rounded-pill border border-hairline px-lg py-xs text-body-sm text-ink hover:text-ink-hover"
+              >
+                {playing
+                  ? t("player.pause")
+                  : clock >= bounds.current[1]
+                    ? t("player.replay")
+                    : t("player.play")}
+              </button>
+
+              <div
+                className="flex items-center gap-xs"
+                role="group"
+                aria-label={t("player.speed")}
+              >
+                {[0.25, 0.5, 1, 1.5, 2].map((rate) => (
+                  <button
+                    key={rate}
+                    type="button"
+                    onClick={() => setSpeed(rate)}
+                    aria-pressed={speed === rate}
+                    className={`cursor-pointer rounded-pill border px-sm py-xs font-mono text-body-sm tabular-nums ${
+                      speed === rate
+                        ? "border-[color:var(--color-accent-breeze)] text-[color:var(--color-accent-breeze)]"
+                        : "border-hairline text-mute hover:text-ink-hover"
+                    }`}
+                  >
+                    {rate}×
+                  </button>
+                ))}
+              </div>
+
+              <span className="font-mono text-body-sm tabular-nums text-body">
+                {stamp((clock - bounds.current[0]) / rate)} /{" "}
+                {stamp((bounds.current[1] - bounds.current[0]) / rate)}
+              </span>
+
+              {/* Only while there is something to silence. A map that
+                  names no track, and one whose track did not arrive, are
+                  both plays with no sound, and a mute offered over them
+                  would be a control with nothing behind it. */}
+              {song !== null && (
+                <button
+                  type="button"
+                  onClick={() => setMuted((on) => !on)}
+                  aria-pressed={muted}
+                  className={`cursor-pointer rounded-pill border px-sm py-xs font-mono text-body-sm ${
+                    muted
+                      ? "border-[color:var(--color-accent-breeze)] text-[color:var(--color-accent-breeze)]"
+                      : "border-hairline text-mute hover:text-ink-hover"
+                  }`}
+                >
+                  {t("player.mute")}
+                </button>
+              )}
+
+              {playedHidden && (
+                <button
+                  type="button"
+                  onClick={() => setRevealHidden((on) => !on)}
+                  aria-pressed={revealHidden}
+                  className={`cursor-pointer rounded-pill border px-sm py-xs font-mono text-body-sm ${
+                    revealHidden
+                      ? "border-[color:var(--color-accent-breeze)] text-[color:var(--color-accent-breeze)]"
+                      : "border-hairline text-mute hover:text-ink-hover"
+                  }`}
+                >
+                  {t("player.revealHidden")}
+                </button>
+              )}
+
+              {loop && (
+                <button
+                  type="button"
+                  onClick={() => setLoop(null)}
+                  aria-label={t("player.loopClear")}
+                  className="cursor-pointer rounded-pill border border-[color:var(--color-accent-breeze)] px-sm py-xs font-mono text-body-sm tabular-nums text-[color:var(--color-accent-breeze)]"
+                >
+                  A–B {stamp(loop[0] - bounds.current[0])}–{stamp(loop[1] - bounds.current[0])} ✕
+                </button>
+              )}
+
+              {(loaded.header.analysis?.breaks.length ?? 0) > 0 && (
+                <div className="flex items-center gap-xs">
+                  {([-1, 1] as const).map((direction) => {
+                    const breaks = loaded.header.analysis!.breaks;
+                    const target =
+                      direction === 1
+                        ? breaks.find((item) => item.time > clock + 80)
+                        : [...breaks].reverse().find((item) => item.time < clock - 1600);
+                    return (
+                      <button
+                        key={direction}
+                        type="button"
+                        disabled={!target}
+                        onClick={() => {
+                          if (!target) return;
+                          setPlaying(false);
+                          // Land shortly before the break — in experienced
+                          // time, so the run-up length does not depend on DT.
+                          seek(target.time - 1200 * rate);
+                        }}
+                        className="cursor-pointer rounded-pill border border-hairline px-sm py-xs text-body-sm text-mute hover:text-ink-hover disabled:cursor-default disabled:opacity-40"
+                      >
+                        {direction === -1 ? `‹ ${t("player.break")}` : `${t("player.break")} ›`}
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+
+              <div className="ml-auto">
+                <KeyOverlay samples={loaded.samples} clock={clock} />
+              </div>
+            </div>
+            <p className="eyebrow max-w-[100ch] px-lg pb-md normal-case tracking-normal">
+              {t("player.shortcuts")} — {t("player.samplesOnlyHelp")}
+            </p>
+          </div>
         )}
       </section>
     </div>

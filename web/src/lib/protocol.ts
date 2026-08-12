@@ -338,6 +338,66 @@ export function modNames(mods: number): string[] {
   return names;
 }
 
+/**
+ * The game's own accuracy, from the counts every header carries.
+ *
+ * Recomputed rather than read off `analysis.accuracy`, because a header exists
+ * for plays the simulation could not reproduce and those have no analysis at
+ * all. The counts come from the replay file itself, so this is the number the
+ * score screen showed whatever the simulation later made of it.
+ */
+export function accuracyOf(counts: ReplayHeader["counts"]): number {
+  const total = counts["300"] + counts["100"] + counts["50"] + counts.miss;
+  if (total === 0) return 0;
+  return (300 * counts["300"] + 100 * counts["100"] + 50 * counts["50"]) / (300 * total);
+}
+
+/**
+ * When the play happened, as an instant that can be compared, or `null` when
+ * the header does not say.
+ *
+ * The timestamp is written by the analysis because that is where the replay
+ * file is read, so a play the simulation could not reproduce carries no time at
+ * all. That is a `null` a caller has to decide about rather than a zero to sort
+ * against: sorting an unknown time as the epoch would rank the play whose
+ * analysis failed as the oldest thing on the server.
+ */
+export function playedAt(entry: Entry): number | null {
+  const at = entry.header.analysis?.played_at;
+  if (at === undefined) return null;
+  const parsed = Date.parse(at);
+  return Number.isNaN(parsed) ? null : parsed;
+}
+
+/**
+ * The most recently played of these, or `null` when none of them says when.
+ *
+ * Not simply the first. `/api/replays` walks the dictionary the server fills,
+ * and that dictionary is newest-first only for the startup scan — every play
+ * that finishes while the server runs is appended to the end of it. So the
+ * first entry is the newest until the second play of the evening lands, and
+ * after that it is whatever was newest when `forge serve` started. Other
+ * callers read that endpoint for its whole contents rather than for an order,
+ * so the ordering is not the endpoint's to change; the question is answered
+ * here instead, from the timestamps every header already carries.
+ *
+ * A play with no analysis never wins, because nothing in its header says when
+ * it was played and choosing it would be a guess dressed as an answer. Ties and
+ * plays without a time keep the caller's own order, so asking twice about an
+ * unchanged list gives the same play twice.
+ */
+export function newestPlay(entries: readonly Entry[]): Entry | null {
+  let newest: Entry | null = null;
+  let at = -Infinity;
+  for (const entry of entries) {
+    const when = playedAt(entry);
+    if (when === null || when <= at) continue;
+    newest = entry;
+    at = when;
+  }
+  return newest;
+}
+
 export function decodeSamples(header: ReplayHeader, buffer: ArrayBuffer): Samples {
   const stride = header.sample_bytes;
   const expected = stride * header.sample_count;

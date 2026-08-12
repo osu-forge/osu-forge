@@ -1,0 +1,39 @@
+---
+import Base from "@/layouts/Base.astro";
+import { Nav } from "@/components/Nav";
+
+/**
+ * A page of the dashboard: the navigation, and room for one panel.
+ *
+ * The column is exactly the viewport tall and the panel scrolls inside it, so
+ * the links are reachable from anywhere in a long corpus answer and the replay
+ * viewer — which lays its own panes out against a fixed height and scrolls each
+ * of them separately — gets a definite height to divide up.
+ *
+ * The token is not here. It has to appear in every page's own HTML or
+ * `forge serve` refuses to start naming that page, and a layout cannot hand a
+ * value to slotted content: the page it came from has already rendered by the
+ * time the slot is filled. So each page declares its own, which is also the
+ * honest shape — the token belongs to the document that was served, and this
+ * file is not served, it is compiled into four documents that were.
+ */
+
+interface Props {
+  title: string;
+  /** The route this page is, so the navigation can mark it. Written out rather
+   *  than read from `Astro.url`, which is the build's URL and not the served
+   *  one. */
+  current: string;
+}
+
+const { title, current } = Astro.props;
+---
+
+<Base title={title}>
+  <div class="flex h-screen flex-col">
+    <Nav current={current} client:load />
+    <main class="min-h-0 flex-1 overflow-y-auto">
+      <slot />
+    </main>
+  </div>
+</Base>

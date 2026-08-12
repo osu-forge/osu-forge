@@ -1,9 +1,12 @@
 ---
-import Base from "@/layouts/Base.astro";
-import { App } from "@/components/App";
+import Page from "@/layouts/Page.astro";
+import { Overview } from "@/components/Overview";
 
 /**
- * `__TOKEN__` is substituted by the server when it serves this file.
+ * `__TOKEN__` is substituted by the server when it serves this file, and every
+ * page in `src/pages` carries its own — `forge serve` refuses to start and names
+ * any page that does not, because such a page loads, looks finished, and is
+ * answered 401 on every call it makes.
  *
  * It is in the HTML rather than fetched because a browser navigating to a URL
  * cannot send an `Authorization` header. That is safe rather than a compromise:
@@ -13,11 +16,12 @@ import { App } from "@/components/App";
  * During `astro dev` there is no server doing the substitution, so the literal
  * placeholder is what appears — and the API calls fail with a message saying
  * the token was rejected, which is the correct thing for a page opened without
- * one.
+ * one. Every page fails that way in development; it is not a regression, and it
+ * is the same failure on all four rather than four different ones.
  */
 const token = "__TOKEN__";
 ---
 
-<Base title="osu-forge">
-  <App token={token} client:load />
-</Base>
+<Page title="osu-forge" current="/">
+  <Overview token={token} client:load />
+</Page>

@@ -23,12 +23,12 @@ BUILT_SITE = Path(__file__).resolve().parents[2] / "web" / "dist"
 PORT = 24080
 TOKEN = "test-token-value"
 PAGE = "<!doctype html><title>t</title><script>const T='__TOKEN__';</script>"
-SECOND = "<!doctype html><title>ping</title><script>const P='__TOKEN__';</script>"
+SECOND = "<!doctype html><title>corpus</title><script>const P='__TOKEN__';</script>"
 
 # What `load_site` produces for a directory-format build of two pages: the
 # second one keyed by both forms of its URL, because a browser following a link
-# written `/ping` may ask for either.
-PAGES = {"/": PAGE, "/ping/": SECOND, "/ping": SECOND}
+# written `/corpus` may ask for either.
+PAGES = {"/": PAGE, "/corpus/": SECOND, "/corpus": SECOND}
 
 
 class _Payload:
@@ -117,7 +117,7 @@ class TestPages:
     def test_a_second_page_is_served_with_its_token_and_no_header(self, client: TestClient) -> None:
         # No Authorization, because a browser navigating to a URL cannot attach
         # one — the same reason `/` is reachable without it.
-        response = client.get("/ping/")
+        response = client.get("/corpus/")
         assert response.status_code == 200
         assert response.headers["content-type"].startswith("text/html")
         assert TOKEN in response.text
@@ -126,12 +126,12 @@ class TestPages:
         )
 
     def test_the_second_page_is_reached_by_either_form_of_its_url(self, client: TestClient) -> None:
-        assert client.get("/ping").text == client.get("/ping/").text
+        assert client.get("/corpus").text == client.get("/corpus/").text
 
     def test_the_pages_are_told_apart(self, client: TestClient) -> None:
         # Both hold the placeholder, so a lookup that fell back to the root page
         # would still substitute and still look right.
-        assert "<title>ping</title>" in client.get("/ping/").text
+        assert "<title>corpus</title>" in client.get("/corpus/").text
         assert "<title>t</title>" in client.get("/").text
 
     def test_the_api_still_refuses_without_a_token(self, client: TestClient) -> None:
@@ -166,7 +166,7 @@ class TestPages:
     def test_an_unknown_path_is_a_404_for_a_request_that_has_the_token(
         self, client: TestClient
     ) -> None:
-        assert client.get("/ping/nested", headers=auth()).status_code == 404
+        assert client.get("/corpus/nested", headers=auth()).status_code == 404
 
     def test_a_page_inside_the_api_namespace_is_refused_before_the_socket_opens(
         self, access: Access
@@ -217,28 +217,42 @@ class TestTheRealBuild:
         # way to attach one. Before this change the same file was served out of
         # the asset table as bytes, placeholder intact, and every call the page
         # then made was answered 401 with nothing saying why.
-        response = self.client(access).get("/ping/")
+        response = self.client(access).get("/corpus/")
         assert response.status_code == 200
         assert TOKEN in response.text
         assert "__TOKEN__" not in response.text
 
     def test_either_form_of_its_url_reaches_it(self, access: Access) -> None:
         client = self.client(access)
-        assert client.get("/ping").text == client.get("/ping/").text
+        assert client.get("/corpus").text == client.get("/corpus/").text
 
     def test_the_api_still_refuses_a_request_with_no_token(self, access: Access) -> None:
         assert self.client(access).get("/api/replays").status_code == 401
 
-    def test_a_page_is_sent_only_the_hashes_of_its_own_scripts(self, access: Access) -> None:
-        # The built root page carries Astro's hydration script and the built
-        # second page carries none, so a union policy would hand `/ping/`
-        # permission to run a script it never shipped.
+    def test_a_page_is_sent_the_hashes_of_its_own_scripts_and_no_others(
+        self, access: Access
+    ) -> None:
+        # Every page of this build ships the same two inline scripts — Astro
+        # puts an island's identity in an element attribute rather than in the
+        # script — so a real build cannot presently show two pages being told
+        # apart. `TestHeaders` next door does that on pages written by hand, as
+        # do the ones in `test_server_assets.py`. What this shows is the half
+        # only a real build can: the policy sent with a page names the scripts
+        # that page actually ships, all of them and nothing besides, which is
+        # what the per-page split rests on the day two pages stop matching.
+        site = load_site(BUILT_SITE)
         client = self.client(access)
-        root = client.get("/").headers["content-security-policy"]
-        second = client.get("/ping/").headers["content-security-policy"]
-        assert "'sha256-" in root
-        assert "'sha256-" not in second
-        assert "'unsafe-inline'" not in root.split("style-src")[0]
+        for path in ("/", "/corpus/"):
+            policy = client.get(path).headers["content-security-policy"]
+            scripts = policy.split("script-src")[1].split(";")[0]
+            shipped = site.script_hashes[path]
+            assert shipped, f"{path} ships no inline script, so this asserted nothing"
+            for value in shipped:
+                assert f"'{value}'" in scripts
+            assert scripts.count("sha256-") == len(shipped), (
+                "the policy names a script this page did not ship"
+            )
+            assert "'unsafe-inline'" not in scripts
 
 
 class TestData:
@@ -444,6 +458,44 @@ class TestHeaders:
         assert response.headers["x-content-type-options"] == "nosniff"
         assert response.headers["cache-control"] == "no-store"
 
+    def test_only_the_hashed_bundles_may_be_kept(self, access: Access) -> None:
+        # A dashboard is navigated between, and every one of its pages names the
+        # same couple of hundred kilobytes of `_astro`. Those may be kept because
+        # the build writes a content hash into the name, so the bytes behind one
+        # URL never change — a rebuild is a different URL, not a stale answer.
+        #
+        # Nothing else may be. A page carries this run's token substituted into
+        # its HTML and a kept copy would go on presenting a token from a
+        # `forge serve` that has since stopped; an API answer describes what the
+        # server knows at the moment it is asked.
+        app = build_app(
+            access,
+            pages=PAGES,
+            payloads={"a.osr": _Payload()},  # type: ignore[dict-item]
+            assets={
+                "/_astro/client.BlZe1zq3.js": (b"export {};", "text/javascript"),
+                # Emitted at the root by the build, where nothing is hashed.
+                "/favicon.svg": (b"<svg/>", "image/svg+xml"),
+            },
+        )
+        client = TestClient(app, base_url=f"http://127.0.0.1:{PORT}")
+        assert client.get("/_astro/client.BlZe1zq3.js").headers["cache-control"] == (
+            "public, max-age=31536000, immutable"
+        )
+        for path in ("/", "/corpus/", "/favicon.svg"):
+            assert client.get(path).headers["cache-control"] == "no-store", path
+        assert client.get("/api/replays", headers=auth()).headers["cache-control"] == "no-store"
+
+    def test_a_bundle_that_is_not_there_is_not_kept_either(self, access: Access) -> None:
+        # The prefix alone would hand a year of caching to a 404, and a 404 kept
+        # for a year is a file that stays missing after it has arrived — which is
+        # what a page reloaded during a rebuild would ask for.
+        app = build_app(access, pages=PAGES, payloads={}, assets={})
+        client = TestClient(app, base_url=f"http://127.0.0.1:{PORT}")
+        response = client.get("/_astro/never-built.js", headers=auth())
+        assert response.status_code == 404
+        assert response.headers["cache-control"] == "no-store"
+
     def test_there_is_no_api_documentation_surface(self, client: TestClient) -> None:
         # An interactive docs page on a local server is another origin's way in
         # and another thing to keep correct.
@@ -461,6 +513,36 @@ class TestHeaders:
             policy=lambda path: f"script-src 'self' 'hash-of{path}'",
         )
         client = TestClient(app, base_url=f"http://127.0.0.1:{PORT}")
-        for path in ("/", "/ping/", "/ping"):
+        for path in ("/", "/corpus/", "/corpus"):
             header = client.get(path).headers["content-security-policy"]
             assert header == f"script-src 'self' 'hash-of{path}'"
+
+    def test_a_page_with_no_inline_script_is_sent_no_hash_at_all(
+        self, access: Access, tmp_path: Path
+    ) -> None:
+        # What a union policy costs, shown end to end: one page ships an inline
+        # script and the other ships none, so a policy naming both pages' hashes
+        # would hand the second permission to run a script it never carried.
+        # Written here rather than taken from a real build because that is the
+        # only way to have a page with no inline script at all — every page Astro
+        # emits carries a hydration script, so the real build in
+        # `TestTheRealBuild` can only show the other half, that a page's policy
+        # names its own scripts and no others.
+        root = tmp_path / "dist"
+        (root / "corpus").mkdir(parents=True)
+        (root / "index.html").write_text(PAGE, encoding="utf-8")
+        (root / "corpus" / "index.html").write_text(
+            "<!doctype html><title>corpus</title><p>__TOKEN__</p>", encoding="utf-8"
+        )
+        site = load_site(root)
+        app = build_app(access, pages=site.pages, payloads={}, policy=site.policy)
+        client = TestClient(app, base_url=f"http://127.0.0.1:{PORT}")
+        scripted = client.get("/").headers["content-security-policy"]
+        bare = client.get("/corpus/").headers["content-security-policy"]
+        assert "'sha256-" in scripted
+        assert "'sha256-" not in bare, (
+            "a page shipping no inline script was sent permission to run one"
+        )
+        assert "'unsafe-inline'" not in scripted.split("style-src")[0], (
+            "scripts are allowed by hash, never by turning the protection off"
+        )

@@ -330,6 +330,68 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   rather than implying all of them.
 
 ### Changed
+- The served page is a dashboard of four, and the front door is no longer the
+  replay viewer wearing `/`. There was no main page: opening the tool put a
+  player inside one replay with a corpus hidden behind a hash fragment, so the
+  two questions someone actually arrives with — is anything wrong, and what
+  happened last — could only be answered by loading a replay first. `/` is now
+  an overview built from the corpus answer and the newest play; `/replays/` is
+  the viewer, unchanged in behaviour and still one island, because the clock,
+  the track, the selection and the reviewer's keyboard all die on a navigation
+  and everything a review needs has to be reachable without one; `/corpus/` is
+  the corpus panel given a page instead of a view toggle; `/live/` is the plays
+  that have finished since that document was opened, which is the only genuinely
+  live thing this server has — the socket — and the page says so rather than
+  filling itself from the replay listing under a heading claiming those plays
+  just happened. The two addresses the single-page version answered are
+  honoured: `#corpus` and `#r=<replay>` on `/` are sent to the pages that took
+  them over, once, because an OBS scene pointed at one of them was told it could
+  stay there. `/doctor/` is deliberately not among them — the findings exist
+  only behind `forge doctor` on the command line and there is no endpoint to
+  read them from, and a route that renders nothing is worse than a route that
+  does not exist yet.
+- The renderer, the wire protocol and every analysis panel are untouched by that
+  split. What moved is which document mounts them, which is the whole reason
+  this shape was chosen over a rewrite. What the pages could not share, they now
+  share by name rather than by copy: the metric tile and the banner that were
+  byte-identical in two panels, the verification block that was private to the
+  corpus panel and is wanted by three pages, the fetch-and-watch that every page
+  does the same way, and the failure sentence, which now replaces the panel
+  instead of the whole page — a rejected token is fixed by restarting
+  `forge serve`, and a page that also took the navigation away would leave
+  nowhere to go.
+- The charts draw against one set of shared constants instead of a copy each.
+  Three files declared a chart width of 720, three declared a grid colour, three
+  declared a muted ink, and the one accent went by three different names; the
+  axis label was written out six times across them, and the tooltip's class list
+  was byte-identical in three. None of them disagreed, which is the only interesting
+  thing about them: three copies of a decision agree until one of them is
+  edited. The linear scale, the two nice-number helpers and the four judgement
+  colours move with them. The translator's function type was written out in
+  seven props interfaces and is now named once. Nothing about any picture
+  changes; this is the same geometry, said in one place.
+- `web/src/pages/ping.astro` is gone, as its own docstring said it would be. It
+  existed so a test could check "the server can serve more than one page"
+  against a real build rather than a fixture, and the real pages do that better:
+  the built-site tests point at `/corpus/` now. One of them had to be rewritten
+  rather than repointed. It asserted the second page carried no inline script
+  hash at all, which was only true because a page with no island ships no
+  hydration script; every real page ships one, and on this build every page's
+  scripts hash identically because Astro puts an island's identity in an element
+  attribute rather than in the script. So it asserts the half a real build can
+  show — that a page's policy names the scripts that page ships, all of them and
+  nothing besides — and the hand-written pages next door go on covering the half
+  it cannot, including the one a real build cannot show at all: a page that ships
+  no inline script is sent no hash.
+- The content-hashed bundles under `/_astro/` may be cached; everything else is
+  still `no-store`. The single-page version paid for 180 kB of JavaScript once,
+  and a dashboard was paying for it again on every navigation between its four
+  pages. Their URLs carry a hash of their contents, so a browser holding one is
+  holding the version it asked for and a rebuild is a new URL rather than a stale
+  answer. Nothing else is relaxed: a page has this run's token substituted into
+  its HTML, an API answer describes what the server knows at the moment it is
+  asked, and a 404 under the prefix is not cached either, since a missing bundle
+  kept for a year stays missing after it has arrived.
 - The server serves pages, plural. `Site` held one `index` string and
   `load_site` read one `index.html`; every other file in the build went into the
   asset table, so a second page would have been served from there as the bytes on
@@ -416,6 +478,30 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   interpreter down with no traceback. The engine still gets the smaller binary.
 
 ### Fixed
+- A link to a replay opened a different replay. `/replays/` mirrors the open
+  play into the address, and that effect ran once on mount with nothing selected
+  yet — `null` there means "not decided", but it was written out as an address
+  with no fragment, which stripped the `#r=` naming the play to open. The listing
+  that reads the fragment resolves later, by which time it was gone, so every
+  deep link fell back to whichever play was newest when the server started. The
+  page now reads the address on the way into that fetch rather than out of
+  `location` when it answers, and writes nothing until there is a selection to
+  write. This is the whole point of the front page: every card on `/` and
+  `/live/` is such a link.
+- The overview named the wrong play as the last one read. It took the first
+  entry of `/api/replays`, which is the newest only for the startup scan — every
+  play that finishes while the server runs is appended to the end of the table
+  that endpoint walks, so after the second play of an evening the front page was
+  naming a play from before the session began. The order is not the endpoint's
+  to change, since its other callers read it for its contents; the page decides
+  from `analysis.played_at` instead, which is the replay's own timestamp. A play
+  the simulation could not reproduce carries no timestamp and so is never picked
+  as the newest — nothing in its header says when it happened, and choosing it
+  would be a guess dressed as an answer.
+- The reasons a corpus may not recommend anything are shown one per line instead
+  of joined with a space. Each is a full sentence written by a different check,
+  with its own full stops inside it and no capital at the front, so run together
+  they read as one broken sentence rather than as two findings.
 - The check deciding which requests need no token asked a different question
   than the router did. It read `request.url.path`, which Starlette rebuilds from
   the scope as a string and splits again — so a percent-encoded `?` or `#` in

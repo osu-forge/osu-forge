@@ -22,9 +22,21 @@ const en = {
   "app.title": "osu-forge",
   "app.advisory": "Recommends only. Never modifies osu! files.",
 
+  "nav.overview": "Overview",
   "nav.replays": "Replays",
-  "nav.analysis": "Analysis",
-  "nav.settings": "Settings",
+  "nav.corpus": "Corpus",
+  "nav.live": "Live",
+
+  "overview.noCorpus":
+    "No corpus has been computed on this server, so there is nothing to say across plays yet. It appears once plays have been read.",
+  "overview.corpusLink": "The whole corpus",
+  "overview.lastPlay": "The last play read",
+  "overview.viewerLink": "The replay viewer",
+
+  "live.heading": "Finished while this page was open",
+  "live.waiting":
+    "Nothing has finished since this page was opened. A play appears here as it is read, and the list is not kept — leaving this page empties it.",
+  "live.corpus": "What it did to the corpus",
 
   "replays.empty": "No replays prepared.",
   "replays.loading": "Loading…",
@@ -97,8 +109,6 @@ const en = {
     "A replay records key state at the rendered framerate, about 60 times a second, so a press lands on the first sample at or after the finger moved — up to one sample gap late, 9 ms at the median and 16 ms at the 90th percentile. A wait carries one such gap at each end. Nothing finer than that is claimed here.",
 
   "corpus.title": "The corpus",
-  "corpus.subtitle": "{n} replay(s) across {s} session(s)",
-  "corpus.collecting": "still collecting evidence",
   "corpus.replays": "Replays",
   "corpus.sessions": "Sessions",
   "corpus.hits": "Hits",
@@ -150,13 +160,36 @@ const en = {
 
 export type Key = keyof typeof en;
 
+/**
+ * A dictionary already bound to one locale.
+ *
+ * Every panel takes one of these rather than a locale, so a component cannot
+ * pick a language of its own: the page decides once and hands the same lookup
+ * to everything it draws. It was written out by hand in seven props interfaces
+ * before it was named here, and seven copies of a function type are seven
+ * places for the placeholder argument to be forgotten.
+ */
+export type Translator = (key: Key, values?: Record<string, string | number>) => string;
+
 const ko: Record<Key, string> = {
   "app.title": "osu-forge",
   "app.advisory": "권고만 합니다. osu! 파일을 수정하지 않습니다.",
 
+  "nav.overview": "개요",
   "nav.replays": "리플레이",
-  "nav.analysis": "분석",
-  "nav.settings": "설정",
+  "nav.corpus": "코퍼스",
+  "nav.live": "실시간",
+
+  "overview.noCorpus":
+    "이 서버에서 코퍼스를 아직 계산하지 않았습니다. 그래서 플레이 전체를 두고 할 수 있는 말이 아직 없습니다. 플레이를 읽고 나면 나타납니다.",
+  "overview.corpusLink": "코퍼스 전체",
+  "overview.lastPlay": "마지막으로 읽은 플레이",
+  "overview.viewerLink": "리플레이 뷰어",
+
+  "live.heading": "이 페이지를 연 뒤 끝난 플레이",
+  "live.waiting":
+    "이 페이지를 연 뒤로 끝난 플레이가 없습니다. 플레이는 읽히는 대로 여기 나타나며, 목록은 저장되지 않습니다 — 페이지를 떠나면 비워집니다.",
+  "live.corpus": "코퍼스는 어떻게 움직였나",
 
   "replays.empty": "준비된 리플레이가 없습니다.",
   "replays.loading": "불러오는 중…",
@@ -227,8 +260,6 @@ const ko: Record<Key, string> = {
     "리플레이는 키 상태를 렌더링 프레임레이트로, 초당 약 60번 기록합니다. 그래서 누름은 손가락이 움직인 뒤 첫 표본에 찍히며, 표본 간격만큼 늦습니다 — 중앙값 9 ms, 90분위 16 ms. 간격 값은 양 끝에서 각각 그만큼 흔들립니다. 그보다 더 정밀한 주장은 하지 않습니다.",
 
   "corpus.title": "코퍼스",
-  "corpus.subtitle": "세션 {s}개에 걸친 리플레이 {n}개",
-  "corpus.collecting": "아직 근거를 모으는 중",
   "corpus.replays": "리플레이",
   "corpus.sessions": "세션",
   "corpus.hits": "히트",
@@ -280,7 +311,7 @@ const ko: Record<Key, string> = {
 const DICTIONARIES: Record<Locale, Record<Key, string>> = { en, ko };
 
 /** Look up a string, filling `{name}` placeholders. */
-export function translator(locale: Locale) {
+export function translator(locale: Locale): Translator {
   const table = DICTIONARIES[locale] ?? DICTIONARIES[DEFAULT_LOCALE];
   return (key: Key, values?: Record<string, string | number>): string => {
     const template = table[key];

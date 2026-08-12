@@ -13,7 +13,10 @@ import {
   tapsOf,
   type Interval,
 } from "@/lib/keys";
-import type { Key } from "@/i18n";
+import { ChartTooltip } from "@/components/ChartTooltip";
+import { ACCENT, AXIS_TEXT, CHART_WIDTH, GRID, linear, niceCeil } from "@/lib/chart";
+import { stamp } from "@/lib/format";
+import type { Translator } from "@/i18n";
 
 /**
  * What the hands did, counted off the recorded samples.
@@ -39,32 +42,13 @@ import type { Key } from "@/i18n";
 export interface KeysPanelProps {
   samples: Samples;
   header: ReplayHeader;
-  t: (key: Key, values?: Record<string, string | number>) => string;
+  t: Translator;
   onSeek?: (time: number) => void;
 }
 
-const WIDTH = 720;
+const WIDTH = CHART_WIDTH;
 const HEIGHT = 240;
 const MARGIN = { top: 14, right: 12, bottom: 26, left: 48 } as const;
-
-const DOT = "var(--color-accent-breeze)";
-const GRID = "var(--color-hairline)";
-const INK_MUTE = "var(--color-mute)";
-
-/** The smallest round number at or above `value`, for an axis top. */
-function niceCeil(value: number): number {
-  const power = 10 ** Math.floor(Math.log10(Math.max(value, 1)));
-  for (const step of [1, 1.5, 2, 3, 5, 7.5]) {
-    if (value <= step * power) return step * power;
-  }
-  return 10 * power;
-}
-
-/** `m:ss` of real elapsed time, matching what the transport counts. */
-function stamp(ms: number): string {
-  const seconds = Math.max(0, Math.floor(ms / 1000));
-  return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}`;
-}
 
 interface Placed {
   interval: Interval;
@@ -111,16 +95,20 @@ export function KeysPanel({ samples, header, t, onSeek }: KeysPanelProps) {
     if (intervals.length === 0 || n < 2 || middle === null) return null;
 
     const first = samples.t[0]!;
-    const span = samples.t[n - 1]! - first;
-    if (span <= 0) return null;
+    const last = samples.t[n - 1]!;
+    if (last - first <= 0) return null;
 
     const sorted = intervals.map((one) => one.real).sort((a, b) => a - b);
     const cap = niceCeil(quantile(sorted, 0.99));
 
     const plotW = WIDTH - MARGIN.left - MARGIN.right;
     const plotH = HEIGHT - MARGIN.top - MARGIN.bottom;
-    const xAt = (time: number) => MARGIN.left + ((time - first) / span) * plotW;
-    const yAt = (ms: number) => MARGIN.top + (1 - Math.min(ms, cap) / cap) * plotH;
+    const xAt = linear([first, last], [MARGIN.left, MARGIN.left + plotW]);
+    // Waits above the cap are pinned to the top edge rather than dropped: they
+    // happened, and a chart that simply omitted them would read as a play with
+    // no pauses in it.
+    const along = linear([0, cap], [MARGIN.top + plotH, MARGIN.top]);
+    const yAt = (ms: number) => along(Math.min(ms, cap));
 
     const placed: Placed[] = intervals.map((interval) => ({
       interval,
@@ -138,7 +126,6 @@ export function KeysPanel({ samples, header, t, onSeek }: KeysPanelProps) {
     return {
       cap,
       first,
-      span,
       plotW,
       plotH,
       placed,
@@ -147,7 +134,7 @@ export function KeysPanel({ samples, header, t, onSeek }: KeysPanelProps) {
       overflow: placed.filter((one) => one.over).length,
       medianY: yAt(middle),
       rate,
-      last: samples.t[n - 1]!,
+      last,
     };
   }, [derived, samples]);
 
@@ -237,17 +224,17 @@ export function KeysPanel({ samples, header, t, onSeek }: KeysPanelProps) {
                 strokeDasharray="3 4"
               />
 
-              <path d={geometry.inside} stroke={DOT} strokeWidth={1.6} strokeLinecap="round" />
+              <path d={geometry.inside} stroke={ACCENT} strokeWidth={1.6} strokeLinecap="round" />
               <path
                 d={geometry.above}
-                stroke={DOT}
+                stroke={ACCENT}
                 strokeWidth={1.6}
                 strokeLinecap="round"
                 opacity={0.35}
               />
 
               {hover && (
-                <circle cx={hover.x} cy={hover.y} r={3} fill="none" stroke={DOT} />
+                <circle cx={hover.x} cy={hover.y} r={3} fill="none" stroke={ACCENT} />
               )}
 
               {[
@@ -259,9 +246,7 @@ export function KeysPanel({ samples, header, t, onSeek }: KeysPanelProps) {
                   x={MARGIN.left - 6}
                   y={y}
                   textAnchor="end"
-                  fontSize={11}
-                  fill={INK_MUTE}
-                  fontFamily="var(--font-mono, monospace)"
+                  {...AXIS_TEXT}
                 >
                   {value}
                 </text>
@@ -276,9 +261,7 @@ export function KeysPanel({ samples, header, t, onSeek }: KeysPanelProps) {
                   x={x}
                   y={HEIGHT - 6}
                   textAnchor={anchor}
-                  fontSize={11}
-                  fill={INK_MUTE}
-                  fontFamily="var(--font-mono, monospace)"
+                  {...AXIS_TEXT}
                 >
                   {stamp((at - geometry.first) / geometry.rate)}
                 </text>
@@ -286,18 +269,14 @@ export function KeysPanel({ samples, header, t, onSeek }: KeysPanelProps) {
             </svg>
 
             {hover && (
-              <div
-                className="pointer-events-none absolute z-10 rounded-sm border border-hairline bg-canvas-card px-md py-xs text-body-sm"
-                style={{
-                  left: `${(hover.x / WIDTH) * 100}%`,
-                  top: `${(hover.y / HEIGHT) * 100}%`,
-                  // The panel is narrow enough that a centred tooltip on an
-                  // early or late tap would hang off the aside and be clipped,
-                  // so near the edges it hangs inward instead.
-                  transform: `translate(${
-                    hover.x < WIDTH * 0.25 ? "0" : hover.x > WIDTH * 0.75 ? "-100%" : "-50%"
-                  }, calc(-100% - 8px))`,
-                }}
+              <ChartTooltip
+                x={hover.x}
+                y={hover.y}
+                height={HEIGHT}
+                // The panel is narrow enough that a centred tooltip on an early
+                // or late tap would hang off the aside and be clipped, so near
+                // the edges it hangs inward instead.
+                align={hover.x < WIDTH * 0.25 ? "start" : hover.x > WIDTH * 0.75 ? "end" : "center"}
               >
                 <div className="whitespace-nowrap font-mono tabular-nums text-ink">
                   {stamp((hover.interval.time - geometry.first) / geometry.rate)} ·{" "}
@@ -306,7 +285,7 @@ export function KeysPanel({ samples, header, t, onSeek }: KeysPanelProps) {
                 <div className="whitespace-nowrap text-mute">
                   {t("keys.tooltipBpm", { bpm: Math.round(snapBpm(hover.interval.real)) })}
                 </div>
-              </div>
+              </ChartTooltip>
             )}
           </div>
 

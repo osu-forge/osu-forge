@@ -1,0 +1,12 @@
+---
+import Page from "@/layouts/Page.astro";
+import { LiveSession } from "@/components/LiveSession";
+
+// Substituted by the server; see `index.astro` for why the token is in the HTML
+// rather than fetched.
+const token = "__TOKEN__";
+---
+
+<Page title="osu-forge - live" current="/live/">
+  <LiveSession token={token} client:load />
+</Page>

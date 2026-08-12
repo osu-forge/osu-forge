@@ -86,12 +86,13 @@ class Site:
     """URL path to HTML, each still holding the token placeholder.
 
     Keyed by what a browser will ask for rather than by where the file sits. A
-    directory-format build emits `ping/index.html`, and a link written `/ping`
-    is followed as `/ping` by one browser and `/ping/` by another, so both are
-    keys for the same page. Answering the slashless form with the page instead
-    of a redirect to the slashed one costs a round trip less, and is safe only
-    because every URL the built page names is absolute — a relative one would
-    resolve against `/` from `/ping` and against `/ping/` from `/ping/`.
+    directory-format build emits `corpus/index.html`, and a link written
+    `/corpus` is followed as `/corpus` by one browser and `/corpus/` by another,
+    so both are keys for the same page. Answering the slashless form with the
+    page instead of a redirect to the slashed one costs a round trip less, and
+    is safe only because every URL the built page names is absolute — a relative
+    one would resolve against `/` from `/corpus` and against `/corpus/` from
+    `/corpus/`.
     """
 
     assets: dict[str, tuple[bytes, str]] = field(default_factory=dict)
@@ -219,8 +220,8 @@ def page_urls(relative: str) -> tuple[str, str | None]:
     """The URL a browser asks for a built page by, and the other form of it.
 
     Astro decides the file shape: `build.format: "directory"` writes
-    `ping/index.html` and `"file"` writes `ping.html`, for the one link
-    `/ping`. Both shapes are answered here rather than one being assumed,
+    `corpus/index.html` and `"file"` writes `corpus.html`, for the one link
+    `/corpus`. Both shapes are answered here rather than one being assumed,
     because the cost is three lines and the cost of assuming is a page served
     as bytes with its placeholder intact — which fails silently. The config
     states the shape anyway, so the two sides can be checked against each other
@@ -231,8 +232,8 @@ def page_urls(relative: str) -> tuple[str, str | None]:
     if relative == "index.html":
         return "/", None
     if relative.endswith("/index.html"):
-        # `ping/index.html` -> `/ping/`, and `/ping` for the browser that drops
-        # the slash on the way to it.
+        # `corpus/index.html` -> `/corpus/`, and `/corpus` for the browser that
+        # drops the slash on the way to it.
         directory = "/" + relative.removesuffix("index.html")
         return directory, directory.rstrip("/")
     return "/" + relative, "/" + relative.removesuffix(".html")

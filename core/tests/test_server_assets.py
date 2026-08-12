@@ -78,7 +78,7 @@ class TestLoading:
         # The page that lost it is the one nobody thought to open, so checking
         # the root page only would report the build as fine.
         root = build_site(tmp_path / "dist")
-        add_page(root, "ping/index.html", "<html>no placeholder</html>")
+        add_page(root, "corpus/index.html", "<html>no placeholder</html>")
         assert not load_site(root).carries_token_placeholder
 
     def test_discovery_finds_the_checkout(self, monkeypatch) -> None:
@@ -98,32 +98,32 @@ class TestPages:
 
     def test_a_second_page_is_a_page_and_not_an_asset(self, tmp_path: Path) -> None:
         root = build_site(tmp_path / "dist")
-        add_page(root, "ping/index.html", "<html>__TOKEN__ ping</html>")
+        add_page(root, "corpus/index.html", "<html>__TOKEN__ corpus</html>")
         site = load_site(root)
-        assert site.pages["/ping/"] == "<html>__TOKEN__ ping</html>"
+        assert site.pages["/corpus/"] == "<html>__TOKEN__ corpus</html>"
         assert not [url for url in site.assets if url.endswith(".html")]
         assert ".html" not in site.skipped, "a page is served, not counted as unservable"
 
     def test_both_forms_of_the_directory_url_answer(self, tmp_path: Path) -> None:
-        # A link written `/ping` is followed as `/ping` by one browser and
-        # `/ping/` by another, and the server answers whichever arrives rather
+        # A link written `/corpus` is followed as `/corpus` by one browser and
+        # `/corpus/` by another, and the server answers whichever arrives rather
         # than spending a redirect on correcting a slash.
         root = build_site(tmp_path / "dist")
-        add_page(root, "ping/index.html")
+        add_page(root, "corpus/index.html")
         site = load_site(root)
-        assert site.pages["/ping"] == site.pages["/ping/"]
+        assert site.pages["/corpus"] == site.pages["/corpus/"]
 
     def test_a_file_format_build_is_reachable_by_the_link_that_names_it(
         self, tmp_path: Path
     ) -> None:
-        # `build.format: "file"` writes `ping.html` for the link `/ping`. The
+        # `build.format: "file"` writes `corpus.html` for the link `/corpus`. The
         # config says `directory`, and this is what stops the other setting being
         # a page served as bytes.
         root = build_site(tmp_path / "dist")
-        add_page(root, "ping.html")
+        add_page(root, "corpus.html")
         site = load_site(root)
-        assert "/ping.html" in site.pages
-        assert "/ping" in site.pages
+        assert "/corpus.html" in site.pages
+        assert "/corpus" in site.pages
 
     def test_two_shapes_of_one_route_keep_their_own_urls(self, tmp_path: Path) -> None:
         # `build.format: "preserve"` can emit both for one route. Each stays
@@ -131,12 +131,12 @@ class TestPages:
         # settled the same way every load rather than by whatever the directory
         # was walked in.
         root = build_site(tmp_path / "dist")
-        add_page(root, "ping.html", "<html>__TOKEN__ file form</html>")
-        add_page(root, "ping/index.html", "<html>__TOKEN__ directory form</html>")
+        add_page(root, "corpus.html", "<html>__TOKEN__ file form</html>")
+        add_page(root, "corpus/index.html", "<html>__TOKEN__ directory form</html>")
         site = load_site(root)
-        assert site.pages["/ping.html"] == "<html>__TOKEN__ file form</html>"
-        assert site.pages["/ping/"] == "<html>__TOKEN__ directory form</html>"
-        assert site.pages["/ping"] == "<html>__TOKEN__ directory form</html>"
+        assert site.pages["/corpus.html"] == "<html>__TOKEN__ file form</html>"
+        assert site.pages["/corpus/"] == "<html>__TOKEN__ directory form</html>"
+        assert site.pages["/corpus"] == "<html>__TOKEN__ directory form</html>"
 
     def test_a_file_without_an_extension_is_not_taken_for_a_page(self, tmp_path: Path) -> None:
         # It would be served with no content type to give it, and a page the
@@ -151,7 +151,7 @@ class TestPages:
         # A dist with pages but no root is a build that half happened, and the
         # honest answer is still the command that produces one.
         root = tmp_path / "dist"
-        add_page(root, "ping/index.html")
+        add_page(root, "corpus/index.html")
         with pytest.raises(SiteMissingError, match="npm run build"):
             load_site(root)
 
@@ -174,8 +174,8 @@ class TestTheRealBuild:
     def test_the_second_page_arrives_where_the_config_says(self) -> None:
         site = load_site(BUILT_SITE)
         assert "/" in site.pages
-        assert "/ping/" in site.pages, sorted(site.pages)
-        assert "/ping" in site.pages
+        assert "/corpus/" in site.pages, sorted(site.pages)
+        assert "/corpus" in site.pages
 
     def test_no_built_page_is_served_as_bytes(self) -> None:
         site = load_site(BUILT_SITE)
@@ -185,9 +185,9 @@ class TestTheRealBuild:
         assert load_site(BUILT_SITE).carries_token_placeholder
 
     def test_every_built_page_names_only_absolute_urls(self) -> None:
-        # `/ping` is answered with the page rather than a redirect to `/ping/`,
+        # `/corpus` is answered with the page rather than a redirect to `/corpus/`,
         # which is only safe while nothing in the HTML is relative: `href="a.css"`
-        # would resolve against `/` from one form and `/ping/` from the other.
+        # would resolve against `/` from one form and `/corpus/` from the other.
         #
         # Every URL-shaped attribute, not `href` and `src` alone: Astro puts the
         # island's script URLs on `component-url` and `renderer-url`, and those
@@ -265,13 +265,13 @@ class TestPolicy:
         # injected copy of one page's script on every other page, which is the
         # hole naming hashes was there to close.
         root = build_site(tmp_path / "dist", "<html>__TOKEN__<script>home()</script></html>")
-        add_page(root, "ping/index.html", "<html>__TOKEN__<script>ping()</script></html>")
+        add_page(root, "corpus/index.html", "<html>__TOKEN__<script>corpus()</script></html>")
         site = load_site(root)
-        home, ping = site.script_hashes["/"], site.script_hashes["/ping/"]
-        assert home and ping and home != ping
-        assert f"'{ping[0]}'" not in site.policy("/")
-        assert f"'{home[0]}'" not in site.policy("/ping/")
-        assert site.policy("/ping/") == site.policy("/ping"), (
+        home, second = site.script_hashes["/"], site.script_hashes["/corpus/"]
+        assert home and second and home != second
+        assert f"'{second[0]}'" not in site.policy("/")
+        assert f"'{home[0]}'" not in site.policy("/corpus/")
+        assert site.policy("/corpus/") == site.policy("/corpus"), (
             "one page, one policy, whichever form of its URL was asked for"
         )
 

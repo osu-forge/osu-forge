@@ -1,6 +1,18 @@
 import { useMemo, useState } from "react";
 import type { CorpusProgress, ProgressPoint, ProgressSide } from "@/lib/protocol";
-import type { Key } from "@/i18n";
+import { ChartTooltip } from "@/components/ChartTooltip";
+import {
+  ACCENT,
+  AXIS_TEXT,
+  CHART_WIDTH,
+  GRID,
+  MUTED,
+  SURFACE,
+  linear,
+  niceStep,
+} from "@/lib/chart";
+import { monthDay, signed } from "@/lib/format";
+import type { Translator } from "@/i18n";
 
 /**
  * The corpus over time: one dot per sitting, and the two eras' intervals.
@@ -23,35 +35,17 @@ import type { Key } from "@/i18n";
 
 export interface ProgressChartProps {
   progress: CorpusProgress;
-  t: (key: Key, values?: Record<string, string | number>) => string;
+  t: Translator;
 }
 
-const WIDTH = 720;
+const WIDTH = CHART_WIDTH;
 const HEIGHT = 240;
 const MARGIN = { top: 24, right: 16, bottom: 28, left: 48 } as const;
-
-const ACCENT = "var(--color-accent-breeze)";
-const GRID = "var(--color-hairline)";
-const INK_MUTE = "var(--color-mute)";
-const SURFACE = "var(--color-canvas)";
 
 interface Placed {
   point: ProgressPoint;
   x: number;
   y: number;
-}
-
-function niceStep(span: number): number {
-  const raw = span / 4;
-  const power = 10 ** Math.floor(Math.log10(raw));
-  for (const step of [1, 2, 5, 10]) {
-    if (raw <= step * power) return step * power;
-  }
-  return 10 * power;
-}
-
-function day(iso: string): string {
-  return iso.slice(5, 10);
 }
 
 export function ProgressChart({ progress, t }: ProgressChartProps) {
@@ -78,9 +72,15 @@ export function ProgressChart({ progress, t }: ProgressChartProps) {
 
     const plotW = WIDTH - MARGIN.left - MARGIN.right;
     const plotH = HEIGHT - MARGIN.top - MARGIN.bottom;
+    // One session is one dot and no scale: with nothing to be spaced against
+    // it sits in the middle rather than at an end, which is where a division by
+    // a zero-wide domain would otherwise put it.
+    const along = linear([0, drawn.length - 1], [MARGIN.left, MARGIN.left + plotW]);
     const xAt = (index: number) =>
-      MARGIN.left + (drawn.length === 1 ? plotW / 2 : (index / (drawn.length - 1)) * plotW);
-    const yAt = (value: number) => MARGIN.top + ((y1 - value) / (y1 - y0)) * plotH;
+      drawn.length === 1 ? MARGIN.left + plotW / 2 : along(index);
+    // Inverted on purpose: later is up, which is the direction a reader already
+    // expects a larger number to be.
+    const yAt = linear([y1, y0], [MARGIN.top, MARGIN.top + plotH]);
 
     const placed: Placed[] = drawn.map((point, index) => ({
       point,
@@ -160,9 +160,7 @@ export function ProgressChart({ progress, t }: ProgressChartProps) {
               x={MARGIN.left - 8}
               y={yAt(tick) + 3.5}
               textAnchor="end"
-              fontSize={11}
-              fill={INK_MUTE}
-              fontFamily="var(--font-mono, monospace)"
+              {...AXIS_TEXT}
             >
               {tick > 0 ? `+${tick}` : tick}
             </text>
@@ -196,7 +194,7 @@ export function ProgressChart({ progress, t }: ProgressChartProps) {
                   x={box.x + 6}
                   y={box.top - 4}
                   fontSize={10}
-                  fill={INK_MUTE}
+                  fill={MUTED}
                   style={{ textTransform: "uppercase", letterSpacing: "0.08em" }}
                 >
                   {t(era === "before" ? "progress.before" : "progress.after")}
@@ -213,7 +211,7 @@ export function ProgressChart({ progress, t }: ProgressChartProps) {
               x2={boundaryX}
               y1={MARGIN.top - 6}
               y2={HEIGHT - MARGIN.bottom}
-              stroke={INK_MUTE}
+              stroke={MUTED}
               strokeWidth={1}
               strokeDasharray="3 3"
             />
@@ -222,7 +220,7 @@ export function ProgressChart({ progress, t }: ProgressChartProps) {
               y={MARGIN.top - 10}
               textAnchor={boundaryX > WIDTH * 0.7 ? "end" : "start"}
               fontSize={10}
-              fill={INK_MUTE}
+              fill={MUTED}
               style={{ textTransform: "uppercase", letterSpacing: "0.08em" }}
             >
               {t(
@@ -256,22 +254,18 @@ export function ProgressChart({ progress, t }: ProgressChartProps) {
               x={placed[0]!.x}
               y={HEIGHT - 8}
               textAnchor="start"
-              fontSize={11}
-              fill={INK_MUTE}
-              fontFamily="var(--font-mono, monospace)"
+              {...AXIS_TEXT}
             >
-              {day(placed[0]!.point.started_at)}
+              {monthDay(placed[0]!.point.started_at)}
             </text>
             {placed.length > 1 && (
               <text
                 x={placed[placed.length - 1]!.x}
                 y={HEIGHT - 8}
                 textAnchor="end"
-                fontSize={11}
-                fill={INK_MUTE}
-                fontFamily="var(--font-mono, monospace)"
+                {...AXIS_TEXT}
               >
-                {day(placed[placed.length - 1]!.point.started_at)}
+                {monthDay(placed[placed.length - 1]!.point.started_at)}
               </text>
             )}
           </>
@@ -279,23 +273,13 @@ export function ProgressChart({ progress, t }: ProgressChartProps) {
       </svg>
 
       {hover && (
-        <div
-          className="pointer-events-none absolute z-10 rounded-sm border border-hairline bg-canvas-card px-md py-xs text-body-sm"
-          style={{
-            left: `${(hover.x / WIDTH) * 100}%`,
-            top: `${(hover.y / HEIGHT) * 100}%`,
-            transform: "translate(-50%, calc(-100% - 10px))",
-          }}
-        >
-          <div className="font-mono tabular-nums text-ink">
-            {hover.point.mean_error! >= 0 ? "+" : ""}
-            {hover.point.mean_error!.toFixed(1)} ms
-          </div>
+        <ChartTooltip x={hover.x} y={hover.y} height={HEIGHT} gap={10}>
+          <div className="font-mono tabular-nums text-ink">{signed(hover.point.mean_error)} ms</div>
           <div className="mt-xxs whitespace-nowrap text-mute">
-            {day(hover.point.started_at)} · {t("replays.count", { n: hover.point.replays })} ·{" "}
+            {monthDay(hover.point.started_at)} · {t("replays.count", { n: hover.point.replays })} ·{" "}
             {hover.point.hits} hits
           </div>
-        </div>
+        </ChartTooltip>
       )}
 
       <details className="mt-sm">
@@ -313,13 +297,10 @@ export function ProgressChart({ progress, t }: ProgressChartProps) {
           <tbody className="font-mono tabular-nums text-body">
             {drawn.map((point) => (
               <tr key={point.session} className="hairline-b last:border-0">
-                <td className="py-xs">{day(point.started_at)}</td>
+                <td className="py-xs">{monthDay(point.started_at)}</td>
                 <td className="py-xs">{point.replays}</td>
                 <td className="py-xs">{point.hits}</td>
-                <td className="py-xs">
-                  {point.mean_error! >= 0 ? "+" : ""}
-                  {point.mean_error!.toFixed(2)} ms
-                </td>
+                <td className="py-xs">{signed(point.mean_error, 2)} ms</td>
                 <td className="py-xs">
                   {point.spread_ms === null ? "—" : `${point.spread_ms.toFixed(1)} ms`}
                 </td>

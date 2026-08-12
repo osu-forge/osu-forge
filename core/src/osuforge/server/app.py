@@ -39,6 +39,19 @@ _TOKEN_PLACEHOLDER = "__TOKEN__"
 _RESERVED = ("/api", "/ws")
 """The namespaces nothing may be served from without a token."""
 
+_HASHED_ASSETS = "/_astro/"
+"""Where the build puts the files whose URL changes when their contents do.
+
+Astro writes a content hash into every name under here, so a rebuilt bundle is
+a different URL rather than the same URL with new bytes. That is the whole
+condition for letting a browser keep one.
+"""
+
+_IMMUTABLE = "public, max-age=31536000, immutable"
+"""A year, and never revalidated: see `_cacheable` for who may have it."""
+
+_NO_STORE = "no-store"
+
 _TOKEN_SUBPROTOCOL = "osu-forge-token."
 """How a WebSocket carries the token.
 
@@ -73,6 +86,24 @@ def _token_from_subprotocols(raw: str | None) -> str | None:
         if candidate.startswith(_TOKEN_SUBPROTOCOL):
             return candidate[len(_TOKEN_SUBPROTOCOL) :]
     return None
+
+
+def _cacheable(path: str, assets: dict[str, tuple[bytes, str]]) -> bool:
+    """Whether this response may be kept by the browser.
+
+    Only the hashed bundles, and only ones actually in the asset table. They
+    hold no token and no reading — the token is substituted into each page's own
+    HTML, and every number on the page arrives from `/api` afterwards — so the
+    two things that must never sit in a cache are not in them. What is in them
+    is the couple of hundred kilobytes of JavaScript every page of the dashboard
+    names, which without this is fetched again on every navigation between them.
+
+    Membership of the table as well as the prefix, so a 404 under `/_astro/` is
+    not handed a year of caching for a file that does not exist: a page reloaded
+    while a rebuild is halfway through would otherwise be told a bundle is
+    missing and go on believing it until the cache let go.
+    """
+    return path.startswith(_HASHED_ASSETS) and path in assets
 
 
 def build_app(
@@ -166,7 +197,11 @@ def build_app(
         # same-origin, and the header exists only to let other origins read the
         # response — which is the thing being prevented.
         response.headers["X-Content-Type-Options"] = "nosniff"
-        response.headers["Cache-Control"] = "no-store"
+        # `no-store` for everything the answer to which could change or could be
+        # secret, which is everything except the content-hashed bundles: a page
+        # carries this run's token in its HTML, and an API answer describes what
+        # the server knows right now.
+        response.headers["Cache-Control"] = _IMMUTABLE if _cacheable(path, static) else _NO_STORE
         if policy is not None:
             # As a header, not a meta element. `frame-ancestors` is ignored in
             # a meta and it is the directive that stops this page being framed,

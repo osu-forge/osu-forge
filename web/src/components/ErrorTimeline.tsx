@@ -1,6 +1,7 @@
 import { useEffect, useRef } from "react";
 import type { ReplayHeader } from "@/lib/protocol";
-import type { Key } from "@/i18n";
+import { gradeColours } from "@/lib/chart";
+import type { Translator } from "@/i18n";
 
 /**
  * Every judgement against the windows it was judged by.
@@ -23,7 +24,7 @@ export interface ErrorTimelineProps {
   onSeek?: (time: number) => void;
   /** A–B section repeat, map milliseconds, drawn over the chart. */
   loop?: [number, number] | null;
-  t: (key: Key, values?: Record<string, string | number>) => string;
+  t: Translator;
 }
 
 const HEIGHT = 96;
@@ -60,17 +61,21 @@ export function ErrorTimeline({ header, clock, onSeek, loop, t }: ErrorTimelineP
 
     ctx.clearRect(0, 0, element.width, element.height);
 
+    // Indexed by grade, so a judgement's own number picks its colour — and so
+    // a band is painted in the colour of the judgement it awards.
+    const judged = gradeColours(style);
+
     // Bands from the outside in, so the tighter window sits on top of the
     // looser one and each border reads as the edge of its own window.
     const bands: [number, string][] = [
-      [w50, "--color-judge-50"],
-      [w100, "--color-judge-100"],
-      [w300, "--color-judge-300"],
+      [w50, judged[1]],
+      [w100, judged[2]],
+      [w300, judged[3]],
     ];
-    for (const [half, name] of bands) {
+    for (const [half, colour] of bands) {
       const top = scaleY(-half);
       const height = scaleY(half) - top;
-      ctx.fillStyle = token(name);
+      ctx.fillStyle = colour;
       ctx.globalAlpha = 0.1;
       ctx.fillRect(0, top, element.width, height);
       ctx.globalAlpha = 1;
@@ -94,19 +99,13 @@ export function ErrorTimeline({ header, clock, onSeek, loop, t }: ErrorTimelineP
     ctx.stroke();
     ctx.setLineDash([]);
 
-    const colours = [
-      token("--color-judge-miss"),
-      token("--color-judge-50"),
-      token("--color-judge-100"),
-      token("--color-judge-300"),
-    ];
     const size = Math.max(1.5, 1.5 * dpr);
     for (let i = 0; i < header.judgements.length; i++) {
       const judgement = header.judgements[i]!;
       const object = objects[i];
       if (!object) continue;
       const x = ((object.t - first) / span) * element.width;
-      ctx.fillStyle = colours[judgement.grade] ?? colours[3]!;
+      ctx.fillStyle = judged[judgement.grade] ?? judged[3];
       if (judgement.error === null) {
         // A miss has no error to place, so it is drawn on the axis edges
         // rather than at zero — putting it at zero would read as a perfect hit.
