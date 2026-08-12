@@ -8,17 +8,27 @@ game from a web page they happened to open.
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any
 
 import pytest
 from fastapi.testclient import TestClient
 
 from osuforge.server.app import build_app
+from osuforge.server.assets import load_site
 from osuforge.server.security import Access, SessionToken
+
+BUILT_SITE = Path(__file__).resolve().parents[2] / "web" / "dist"
 
 PORT = 24080
 TOKEN = "test-token-value"
 PAGE = "<!doctype html><title>t</title><script>const T='__TOKEN__';</script>"
+SECOND = "<!doctype html><title>corpus</title><script>const P='__TOKEN__';</script>"
+
+# What `load_site` produces for a directory-format build of two pages: the
+# second one keyed by both forms of its URL, because a browser following a link
+# written `/corpus` may ask for either.
+PAGES = {"/": PAGE, "/corpus/": SECOND, "/corpus": SECOND}
 
 
 class _Payload:
@@ -34,7 +44,7 @@ def access() -> Access:
 
 @pytest.fixture
 def client(access: Access) -> TestClient:
-    app = build_app(access, page=PAGE, payloads={"a.osr": _Payload()})  # type: ignore[dict-item]
+    app = build_app(access, pages=PAGES, payloads={"a.osr": _Payload()})  # type: ignore[dict-item]
     return TestClient(app, base_url=f"http://127.0.0.1:{PORT}")
 
 
@@ -101,6 +111,150 @@ class TestToken:
         assert "__TOKEN__" not in client.get("/").text
 
 
+class TestPages:
+    """More than one page, each substituted and each reachable by navigation."""
+
+    def test_a_second_page_is_served_with_its_token_and_no_header(self, client: TestClient) -> None:
+        # No Authorization, because a browser navigating to a URL cannot attach
+        # one — the same reason `/` is reachable without it.
+        response = client.get("/corpus/")
+        assert response.status_code == 200
+        assert response.headers["content-type"].startswith("text/html")
+        assert TOKEN in response.text
+        assert "__TOKEN__" not in response.text, (
+            "an unsubstituted page 401s on every call it makes, and says nothing about why"
+        )
+
+    def test_the_second_page_is_reached_by_either_form_of_its_url(self, client: TestClient) -> None:
+        assert client.get("/corpus").text == client.get("/corpus/").text
+
+    def test_the_pages_are_told_apart(self, client: TestClient) -> None:
+        # Both hold the placeholder, so a lookup that fell back to the root page
+        # would still substitute and still look right.
+        assert "<title>corpus</title>" in client.get("/corpus/").text
+        assert "<title>t</title>" in client.get("/").text
+
+    def test_the_api_still_refuses_without_a_token(self, client: TestClient) -> None:
+        # The point of the exemption being membership of the page table: adding
+        # pages does not move the data behind it.
+        assert client.get("/api/replays").status_code == 401
+        assert client.get("/api/replays/a.osr/frames").status_code == 401
+
+    def test_a_path_that_reads_two_ways_is_decided_by_the_one_that_routes(
+        self, client: TestClient
+    ) -> None:
+        # `request.url.path` is rebuilt from the scope and re-split, so an
+        # encoded `?` decodes into a delimiter and everything after it is
+        # dropped: this path reads as `/` there and as itself to the router.
+        # Whichever handler ends up running, the exemption has to have been
+        # decided about the same string, or a request reaches one on the
+        # strength of another's exemption.
+        response = client.get("/%3F../api/replays")
+        assert response.status_code == 401, (
+            "the request was waved through on the root page's exemption"
+        )
+
+    def test_a_page_under_a_differently_cased_api_is_refused_too(self, access: Access) -> None:
+        # The router matches case-sensitively, so `/API/x` would never reach the
+        # `/api/x` handler and this is not reachable today. It is refused anyway:
+        # this check is what decides who is served without a token, and resting
+        # that on a second component's case sensitivity is a coupling nobody
+        # would write down on purpose.
+        with pytest.raises(ValueError, match="without a token"):
+            build_app(access, pages={"/": PAGE, "/API/sneak/": PAGE}, payloads={})
+
+    def test_an_unknown_path_is_a_404_for_a_request_that_has_the_token(
+        self, client: TestClient
+    ) -> None:
+        assert client.get("/corpus/nested", headers=auth()).status_code == 404
+
+    def test_a_page_inside_the_api_namespace_is_refused_before_the_socket_opens(
+        self, access: Access
+    ) -> None:
+        # It cannot come out of an Astro build, and if it ever did it would be an
+        # exemption granted inside the data surface. Refused at construction,
+        # where it is one check, rather than per request, where it is a filter
+        # that has to be right about every path a browser can encode.
+        for table in ({"/": PAGE, "/api/replays": PAGE}, {"/": PAGE, "/ws": PAGE}):
+            with pytest.raises(ValueError, match="without a token"):
+                build_app(access, pages=table, payloads={})
+
+    def test_an_asset_inside_the_api_namespace_is_refused_too(self, access: Access) -> None:
+        with pytest.raises(ValueError, match="without a token"):
+            build_app(
+                access,
+                pages={"/": PAGE},
+                payloads={},
+                assets={"/api/replays": (b"{}", "application/json")},
+            )
+
+
+@pytest.mark.skipif(
+    not (BUILT_SITE / "index.html").is_file(),
+    reason=f"no built site at {BUILT_SITE}; run `npm run build` in web/",
+)
+class TestTheRealBuild:
+    """The whole chain on real output: Astro's config, the loader, the server.
+
+    The fixtures above assert what the server does with a page table; this
+    asserts that the table a real build produces is the one it does that to. The
+    two can only drift apart here, where nothing is written by hand.
+    """
+
+    def client(self, access: Access) -> TestClient:
+        site = load_site(BUILT_SITE)
+        app = build_app(
+            access,
+            pages=site.pages,
+            payloads={},
+            assets=site.assets,
+            policy=site.policy,
+        )
+        return TestClient(app, base_url=f"http://127.0.0.1:{PORT}")
+
+    def test_the_second_page_arrives_substituted_and_unauthenticated(self, access: Access) -> None:
+        # No Authorization header, because a browser navigating to a URL has no
+        # way to attach one. Before this change the same file was served out of
+        # the asset table as bytes, placeholder intact, and every call the page
+        # then made was answered 401 with nothing saying why.
+        response = self.client(access).get("/corpus/")
+        assert response.status_code == 200
+        assert TOKEN in response.text
+        assert "__TOKEN__" not in response.text
+
+    def test_either_form_of_its_url_reaches_it(self, access: Access) -> None:
+        client = self.client(access)
+        assert client.get("/corpus").text == client.get("/corpus/").text
+
+    def test_the_api_still_refuses_a_request_with_no_token(self, access: Access) -> None:
+        assert self.client(access).get("/api/replays").status_code == 401
+
+    def test_a_page_is_sent_the_hashes_of_its_own_scripts_and_no_others(
+        self, access: Access
+    ) -> None:
+        # Every page of this build ships the same two inline scripts — Astro
+        # puts an island's identity in an element attribute rather than in the
+        # script — so a real build cannot presently show two pages being told
+        # apart. `TestHeaders` next door does that on pages written by hand, as
+        # do the ones in `test_server_assets.py`. What this shows is the half
+        # only a real build can: the policy sent with a page names the scripts
+        # that page actually ships, all of them and nothing besides, which is
+        # what the per-page split rests on the day two pages stop matching.
+        site = load_site(BUILT_SITE)
+        client = self.client(access)
+        for path in ("/", "/corpus/"):
+            policy = client.get(path).headers["content-security-policy"]
+            scripts = policy.split("script-src")[1].split(";")[0]
+            shipped = site.script_hashes[path]
+            assert shipped, f"{path} ships no inline script, so this asserted nothing"
+            for value in shipped:
+                assert f"'{value}'" in scripts
+            assert scripts.count("sha256-") == len(shipped), (
+                "the policy names a script this page did not ship"
+            )
+            assert "'unsafe-inline'" not in scripts
+
+
 class TestData:
     def test_a_header_comes_back_as_json(self, client: TestClient) -> None:
         response = client.get("/api/replays/a.osr/header", headers=auth())
@@ -125,7 +279,7 @@ class TestData:
 
 class TestBackground:
     def build(self, access: Access, payload: Any) -> TestClient:
-        app = build_app(access, page=PAGE, payloads={"a.osr": payload})
+        app = build_app(access, pages=PAGES, payloads={"a.osr": payload})
         return TestClient(app, base_url=f"http://127.0.0.1:{PORT}")
 
     def test_a_background_comes_back_with_its_kind(self, access: Access, tmp_path: Any) -> None:
@@ -160,11 +314,51 @@ class TestBackground:
         assert self.build(access, payload).get("/api/replays/a.osr/background").status_code == 401
 
 
+class TestAudio:
+    def build(self, access: Access, payload: Any) -> TestClient:
+        app = build_app(access, pages=PAGES, payloads={"a.osr": payload})
+        return TestClient(app, base_url=f"http://127.0.0.1:{PORT}")
+
+    def test_a_song_comes_back_with_its_kind(self, access: Access, tmp_path: Any) -> None:
+        # The kind is what decides whether the element will play it, so it is
+        # mapped from the suffix rather than guessed from the bytes.
+        for name, expected in (("a.mp3", "audio/mpeg"), ("a.ogg", "audio/ogg")):
+            song = tmp_path / name
+            song.write_bytes(b"not really encoded")
+            payload = _Payload()
+            payload.audio = song
+            response = self.build(access, payload).get("/api/replays/a.osr/audio", headers=auth())
+            assert response.status_code == 200
+            assert response.headers["content-type"] == expected
+            assert response.content == b"not really encoded"
+
+    def test_a_map_without_one_is_a_404(self, access: Access) -> None:
+        client = self.build(access, _Payload())
+        assert client.get("/api/replays/a.osr/audio", headers=auth()).status_code == 404
+
+    def test_a_file_deleted_since_startup_is_a_404_not_a_crash(
+        self, access: Access, tmp_path: Any
+    ) -> None:
+        payload = _Payload()
+        payload.audio = tmp_path / "gone.mp3"
+        client = self.build(access, payload)
+        assert client.get("/api/replays/a.osr/audio", headers=auth()).status_code == 404
+
+    def test_it_needs_the_token_like_everything_under_api(
+        self, access: Access, tmp_path: Any
+    ) -> None:
+        song = tmp_path / "a.mp3"
+        song.write_bytes(b"mp3")
+        payload = _Payload()
+        payload.audio = song
+        assert self.build(access, payload).get("/api/replays/a.osr/audio").status_code == 401
+
+
 class TestCorpus:
     def build(self, access: Access, corpus: Any) -> TestClient:
         app = build_app(
             access,
-            page=PAGE,
+            pages=PAGES,
             payloads={"a.osr": _Payload()},
             corpus=corpus,  # type: ignore[dict-item]
         )
@@ -264,8 +458,91 @@ class TestHeaders:
         assert response.headers["x-content-type-options"] == "nosniff"
         assert response.headers["cache-control"] == "no-store"
 
+    def test_only_the_hashed_bundles_may_be_kept(self, access: Access) -> None:
+        # A dashboard is navigated between, and every one of its pages names the
+        # same couple of hundred kilobytes of `_astro`. Those may be kept because
+        # the build writes a content hash into the name, so the bytes behind one
+        # URL never change — a rebuild is a different URL, not a stale answer.
+        #
+        # Nothing else may be. A page carries this run's token substituted into
+        # its HTML and a kept copy would go on presenting a token from a
+        # `forge serve` that has since stopped; an API answer describes what the
+        # server knows at the moment it is asked.
+        app = build_app(
+            access,
+            pages=PAGES,
+            payloads={"a.osr": _Payload()},  # type: ignore[dict-item]
+            assets={
+                "/_astro/client.BlZe1zq3.js": (b"export {};", "text/javascript"),
+                # Emitted at the root by the build, where nothing is hashed.
+                "/favicon.svg": (b"<svg/>", "image/svg+xml"),
+            },
+        )
+        client = TestClient(app, base_url=f"http://127.0.0.1:{PORT}")
+        assert client.get("/_astro/client.BlZe1zq3.js").headers["cache-control"] == (
+            "public, max-age=31536000, immutable"
+        )
+        for path in ("/", "/corpus/", "/favicon.svg"):
+            assert client.get(path).headers["cache-control"] == "no-store", path
+        assert client.get("/api/replays", headers=auth()).headers["cache-control"] == "no-store"
+
+    def test_a_bundle_that_is_not_there_is_not_kept_either(self, access: Access) -> None:
+        # The prefix alone would hand a year of caching to a 404, and a 404 kept
+        # for a year is a file that stays missing after it has arrived — which is
+        # what a page reloaded during a rebuild would ask for.
+        app = build_app(access, pages=PAGES, payloads={}, assets={})
+        client = TestClient(app, base_url=f"http://127.0.0.1:{PORT}")
+        response = client.get("/_astro/never-built.js", headers=auth())
+        assert response.status_code == 404
+        assert response.headers["cache-control"] == "no-store"
+
     def test_there_is_no_api_documentation_surface(self, client: TestClient) -> None:
         # An interactive docs page on a local server is another origin's way in
         # and another thing to keep correct.
         for path in ("/docs", "/redoc", "/openapi.json"):
             assert client.get(path, headers=auth()).status_code == 404
+
+    def test_the_policy_is_asked_for_the_path_it_is_sent_with(self, access: Access) -> None:
+        # Per page, and this is the wiring that makes it so: each page ships its
+        # own inline script, and one policy naming every page's hashes would
+        # admit each of those scripts on all the other pages.
+        app = build_app(
+            access,
+            pages=PAGES,
+            payloads={},
+            policy=lambda path: f"script-src 'self' 'hash-of{path}'",
+        )
+        client = TestClient(app, base_url=f"http://127.0.0.1:{PORT}")
+        for path in ("/", "/corpus/", "/corpus"):
+            header = client.get(path).headers["content-security-policy"]
+            assert header == f"script-src 'self' 'hash-of{path}'"
+
+    def test_a_page_with_no_inline_script_is_sent_no_hash_at_all(
+        self, access: Access, tmp_path: Path
+    ) -> None:
+        # What a union policy costs, shown end to end: one page ships an inline
+        # script and the other ships none, so a policy naming both pages' hashes
+        # would hand the second permission to run a script it never carried.
+        # Written here rather than taken from a real build because that is the
+        # only way to have a page with no inline script at all — every page Astro
+        # emits carries a hydration script, so the real build in
+        # `TestTheRealBuild` can only show the other half, that a page's policy
+        # names its own scripts and no others.
+        root = tmp_path / "dist"
+        (root / "corpus").mkdir(parents=True)
+        (root / "index.html").write_text(PAGE, encoding="utf-8")
+        (root / "corpus" / "index.html").write_text(
+            "<!doctype html><title>corpus</title><p>__TOKEN__</p>", encoding="utf-8"
+        )
+        site = load_site(root)
+        app = build_app(access, pages=site.pages, payloads={}, policy=site.policy)
+        client = TestClient(app, base_url=f"http://127.0.0.1:{PORT}")
+        scripted = client.get("/").headers["content-security-policy"]
+        bare = client.get("/corpus/").headers["content-security-policy"]
+        assert "'sha256-" in scripted
+        assert "'sha256-" not in bare, (
+            "a page shipping no inline script was sent permission to run one"
+        )
+        assert "'unsafe-inline'" not in scripted.split("style-src")[0], (
+            "scripts are allowed by hash, never by turning the protection off"
+        )

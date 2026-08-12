@@ -1,12 +1,9 @@
-import type {
-  Corpus,
-  CorpusAxis,
-  CorpusBeatmap,
-  CorpusProgress,
-  CorpusVerification,
-} from "@/lib/protocol";
+import type { Corpus, CorpusAxis, CorpusBeatmap, CorpusProgress } from "@/lib/protocol";
 import { ProgressChart } from "@/components/ProgressChart";
-import type { Key } from "@/i18n";
+import { Banner, MeasurementOnly, Metric } from "@/components/Parts";
+import { Verification } from "@/components/Verification";
+import { hourMinute, signed } from "@/lib/format";
+import type { Translator } from "@/i18n";
 
 /**
  * What keeps happening, across every play rather than within one.
@@ -42,26 +39,10 @@ export interface CorpusPanelProps {
   /** When this answer arrived, so a page left open shows whether the corpus
    *  it is looking at is from just now or from before lunch. */
   updatedAt?: Date | null;
-  t: (key: Key, values?: Record<string, string | number>) => string;
+  t: Translator;
 }
 
-function Metric({ label, value, hint }: { label: string; value: string; hint?: string }) {
-  return (
-    <div>
-      <div className="eyebrow">{label}</div>
-      <div className="text-display-xs tabular-nums">{value}</div>
-      {hint && <div className="mt-xxs text-body-sm text-mute">{hint}</div>}
-    </div>
-  );
-}
-
-/** "+3.5" / "-2.1", matching how the per-play panel prints an error. */
-function signed(value: number | null, digits = 1): string {
-  if (value === null) return "—";
-  return `${value >= 0 ? "+" : ""}${value.toFixed(digits)}`;
-}
-
-function AxisRow({ axis, t }: { axis: CorpusAxis; t: CorpusPanelProps["t"] }) {
+function AxisRow({ axis, t }: { axis: CorpusAxis; t: Translator }) {
   return (
     <li className="hairline-b py-md last:border-0">
       <div className="flex items-baseline justify-between gap-lg">
@@ -85,66 +66,7 @@ function AxisRow({ axis, t }: { axis: CorpusAxis; t: CorpusPanelProps["t"] }) {
   );
 }
 
-const VERDICT_COLOUR: Record<string, string> = {
-  contradicted: "text-[color:var(--color-judge-miss)]",
-  confirmed: "text-[color:var(--color-accent-breeze)]",
-};
-
-/**
- * Whether the change did what it predicted — the only measurement on this page
- * that can come out wrong, and the reason the rest of it is not self-confirming.
- *
- * Mounted from two places, because it outlives both of the refusals around it:
- * beside the shift when the corpus can be diagnosed, and beside the corpus
- * refusal when it cannot. It carries its own heading and no outer spacing, so
- * whichever caller mounts it decides where it sits.
- *
- * No interval here, deliberately. The shift above already puts one on this same
- * difference, and the two are not the same number: where the bootstrap route
- * wins they are drawn independently and disagree in the second decimal. Two
- * lines in one section, both labelled 95% CI and disagreeing about one
- * difference, is worse than one line. The payload still carries
- * `ci_low`/`ci_high` for a reader that wants the whole record.
- */
-function VerificationBlock({
-  verification,
-  t,
-}: {
-  verification: CorpusVerification;
-  t: CorpusPanelProps["t"];
-}) {
-  return (
-    <section>
-      <h3 className="eyebrow mb-sm">{t("corpus.verification")}</h3>
-      <div className="flex flex-wrap items-baseline gap-sm">
-        <span
-          className={`rounded-pill border border-hairline px-sm text-body-sm ${
-            VERDICT_COLOUR[verification.verdict] ?? "text-mute"
-          }`}
-        >
-          {verification.verdict}
-        </span>
-        {verification.predicted !== null && verification.difference !== null && (
-          <span className="font-mono text-body-sm tabular-nums text-body">
-            {t("corpus.predictedObserved", {
-              p: signed(verification.predicted),
-              o: signed(verification.difference),
-            })}
-          </span>
-        )}
-      </div>
-      <p className="mt-sm max-w-[70ch] text-body-sm text-mute">{verification.reason}</p>
-    </section>
-  );
-}
-
-function ProgressSection({
-  progress,
-  t,
-}: {
-  progress: CorpusProgress;
-  t: CorpusPanelProps["t"];
-}) {
+function ProgressSection({ progress, t }: { progress: CorpusProgress; t: Translator }) {
   const shift = progress.shift;
   if (progress.points.length === 0 && !progress.insufficient) return null;
 
@@ -170,9 +92,8 @@ function ProgressSection({
                     {t(era === "before" ? "progress.before" : "progress.after")}
                   </span>
                   <span className="font-mono tabular-nums text-body">
-                    {side.mean === null ? "—" : `${side.mean >= 0 ? "+" : ""}${side.mean.toFixed(1)} ms`}{" "}
-                    ({side.ci_low === null ? "—" : `${side.ci_low >= 0 ? "+" : ""}${side.ci_low.toFixed(1)}`}{" "}
-                    to {side.ci_high === null ? "—" : `${side.ci_high >= 0 ? "+" : ""}${side.ci_high.toFixed(1)}`})
+                    {side.mean === null ? "—" : `${signed(side.mean)} ms`} (
+                    {signed(side.ci_low)} to {signed(side.ci_high)})
                   </span>
                   <span>{t("progress.sideCounts", { n: side.replays, s: side.sessions })}</span>
                 </div>
@@ -199,14 +120,14 @@ function ProgressSection({
           declined to draw one, and the other way round. */}
       {progress.verification && (
         <div className="mt-lg">
-          <VerificationBlock verification={progress.verification} t={t} />
+          <Verification verification={progress.verification} t={t} />
         </div>
       )}
     </section>
   );
 }
 
-function BeatmapRow({ map, t }: { map: CorpusBeatmap; t: CorpusPanelProps["t"] }) {
+function BeatmapRow({ map, t }: { map: CorpusBeatmap; t: Translator }) {
   return (
     <li className="hairline-b py-md last:border-0">
       <div className="flex items-baseline justify-between gap-lg">
@@ -240,11 +161,7 @@ export function CorpusPanel({ corpus, updatedAt, t }: CorpusPanelProps) {
     <div className="flex flex-col gap-xl p-xl">
       {updatedAt && (
         <p className="eyebrow -mb-lg">
-          {t("corpus.updatedAt", {
-            time: `${String(updatedAt.getHours()).padStart(2, "0")}:${String(
-              updatedAt.getMinutes(),
-            ).padStart(2, "0")}`,
-          })}
+          {t("corpus.updatedAt", { time: hourMinute(updatedAt) })}
         </p>
       )}
       {corpus.insufficient ? (
@@ -259,7 +176,7 @@ export function CorpusPanel({ corpus, updatedAt, t }: CorpusPanelProps) {
               evenings under it has a verdict and no diagnosis. Dropping it
               here would hide "put the change back" behind "play more". */}
           {corpus.progress?.verification && (
-            <VerificationBlock verification={corpus.progress.verification} t={t} />
+            <Verification verification={corpus.progress.verification} t={t} />
           )}
         </>
       ) : (
@@ -280,17 +197,10 @@ export function CorpusPanel({ corpus, updatedAt, t }: CorpusPanelProps) {
           </div>
 
           {!corpus.health.may_recommend && (
-            <p className="rounded-sm border border-hairline p-md text-body-sm text-mute">
-              <span className="text-ink">{t("corpus.measurementOnly")}</span>{" "}
-              {corpus.health.blockers.join(" ")}
-            </p>
+            <MeasurementOnly blockers={corpus.health.blockers} t={t} />
           )}
 
-          {!corpus.local_offsets_known && (
-            <p className="rounded-sm border border-hairline p-md text-body-sm text-mute">
-              {t("corpus.offsetsUnknown")}
-            </p>
-          )}
+          {!corpus.local_offsets_known && <Banner>{t("corpus.offsetsUnknown")}</Banner>}
 
           <section>
             <h2 className="eyebrow mb-sm">{t("corpus.axes")}</h2>

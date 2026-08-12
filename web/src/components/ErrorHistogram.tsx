@@ -1,6 +1,9 @@
 import { useMemo, useState } from "react";
 import type { Analysis, ReplayHeader } from "@/lib/protocol";
-import type { Key } from "@/i18n";
+import { ChartTooltip } from "@/components/ChartTooltip";
+import { ACCENT, AXIS_TEXT, CHART_WIDTH, GRADE_COLOURS, GRID, linear } from "@/lib/chart";
+import { signed } from "@/lib/format";
+import type { Translator } from "@/i18n";
 
 /**
  * Where this play's hits landed, against the windows that judged them.
@@ -20,16 +23,12 @@ import type { Key } from "@/i18n";
 export interface ErrorHistogramProps {
   analysis: Analysis;
   header: ReplayHeader;
-  t: (key: Key, values?: Record<string, string | number>) => string;
+  t: Translator;
 }
 
-const WIDTH = 720;
+const WIDTH = CHART_WIDTH;
 const HEIGHT = 132;
 const MARGIN = { top: 8, right: 10, bottom: 20, left: 10 } as const;
-
-const BAR = "var(--color-accent-breeze)";
-const GRID = "var(--color-hairline)";
-const INK_MUTE = "var(--color-mute)";
 
 interface Bin {
   from: number;
@@ -52,15 +51,15 @@ export function ErrorHistogram({ analysis, header, t }: ErrorHistogramProps) {
     // Real-time half-widths, widest first, so each band paints over the wider
     // one behind it and the nesting reads as rings.
     const windows: { half: number; color: string }[] = [
-      { half: header.windows[2] / rate, color: "var(--color-judge-50)" },
-      { half: header.windows[1] / rate, color: "var(--color-judge-100)" },
-      { half: header.windows[0] / rate, color: "var(--color-judge-300)" },
+      { half: header.windows[2] / rate, color: GRADE_COLOURS[1] },
+      { half: header.windows[1] / rate, color: GRADE_COLOURS[2] },
+      { half: header.windows[0] / rate, color: GRADE_COLOURS[3] },
     ];
     const domain = Math.ceil((windows[0]!.half + 4) / 5) * 5;
 
     const plotW = WIDTH - MARGIN.left - MARGIN.right;
     const plotH = HEIGHT - MARGIN.top - MARGIN.bottom;
-    const xAt = (ms: number) => MARGIN.left + ((ms + domain) / (2 * domain)) * plotW;
+    const xAt = linear([-domain, domain], [MARGIN.left, MARGIN.left + plotW]);
 
     // Around forty bins over the domain, at a width that stays a round number
     // of milliseconds so the tooltip ranges read cleanly.
@@ -136,7 +135,7 @@ export function ErrorHistogram({ analysis, header, t }: ErrorHistogramProps) {
                 y={bin.y}
                 width={Math.max(bin.width, 1)}
                 height={bin.height}
-                fill={BAR}
+                fill={ACCENT}
                 rx={1}
               />
             ),
@@ -162,9 +161,7 @@ export function ErrorHistogram({ analysis, header, t }: ErrorHistogramProps) {
             x={xAt(tick)}
             y={HEIGHT - 6}
             textAnchor={tick < 0 ? "start" : tick > 0 ? "end" : "middle"}
-            fontSize={11}
-            fill={INK_MUTE}
-            fontFamily="var(--font-mono, monospace)"
+            {...AXIS_TEXT}
           >
             {tick > 0 ? `+${tick}` : tick}
           </text>
@@ -172,21 +169,12 @@ export function ErrorHistogram({ analysis, header, t }: ErrorHistogramProps) {
       </svg>
 
       {hover && hover.count > 0 && (
-        <div
-          className="pointer-events-none absolute z-10 rounded-sm border border-hairline bg-canvas-card px-md py-xs text-body-sm"
-          style={{
-            left: `${((hover.x + hover.width / 2) / WIDTH) * 100}%`,
-            top: `${(hover.y / HEIGHT) * 100}%`,
-            transform: "translate(-50%, calc(-100% - 8px))",
-          }}
-        >
+        <ChartTooltip x={hover.x + hover.width / 2} y={hover.y} height={HEIGHT}>
           <div className="whitespace-nowrap font-mono tabular-nums text-ink">
-            {hover.from >= 0 ? "+" : ""}
-            {hover.from} to {hover.to >= 0 ? "+" : ""}
-            {hover.to} ms
+            {signed(hover.from, 0)} to {signed(hover.to, 0)} ms
           </div>
           <div className="text-mute">{t("analysis.histogramCount", { n: hover.count })}</div>
-        </div>
+        </ChartTooltip>
       )}
     </div>
   );

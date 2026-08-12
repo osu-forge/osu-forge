@@ -151,11 +151,11 @@ def serve(
         listeners = broadcaster if broadcaster is not None else Broadcaster()
         app = build_app(
             access,
-            page=site.page(access.token.value),
+            pages=site.pages,
             payloads=payloads,
             assets=site.assets,
             broadcaster=listeners,
-            policy=site.policy(),
+            policy=site.policy,
             corpus=corpus,
         )
 

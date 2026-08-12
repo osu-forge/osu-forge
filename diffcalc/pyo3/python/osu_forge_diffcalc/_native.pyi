@@ -170,6 +170,10 @@ class Beatmap:
         """Background image file name, relative to the beatmap's folder."""
 
     @property
+    def audio(self) -> str | None:
+        """Audio track file name, relative to the beatmap's folder."""
+
+    @property
     def length(self) -> float:
         """Milliseconds from the first object to the last."""
 

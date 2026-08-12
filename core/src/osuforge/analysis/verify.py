@@ -49,6 +49,11 @@ on the narrower one would let this tool print "no detectable change" and
 module exists to prevent rather than a rounding difference. A verdict that
 survives the wider interval is worth acting on; one that only survives the
 narrower is not worth printing.
+
+Which is why the interval is not built here at all. Both routes and the choice
+between them are :func:`osuforge.analysis.clustering.difference_interval`, so
+"the wider of the two" is one decision made in one place over one resampling
+rather than the same policy written out beside each screen that shows it.
 """
 
 from __future__ import annotations
@@ -59,7 +64,18 @@ from enum import StrEnum
 
 import numpy as np
 
-from osuforge.analysis.clustering import ReplaySample, select, welch_difference_ci
+# `BOOTSTRAP_RESAMPLES` is re-exported rather than chosen again. It was chosen
+# again here once, at 4,000 against clustering's 10,000, and a resample count is
+# part of the construction and not a local performance setting: the interval
+# this module reads to issue a verdict has to be the interval progress prints
+# beside it, down to the last decimal. `verification` imports the name from
+# here, so it stays in `__all__`.
+from osuforge.analysis.clustering import (
+    BOOTSTRAP_RESAMPLES,
+    ReplaySample,
+    difference_interval,
+    select,
+)
 
 __all__ = [
     "AGREEMENT_TOLERANCE",
@@ -88,10 +104,6 @@ change moves the mean by 5 ms, and a player partially re-adapting within the
 same session is expected — the question this answers is whether the change did
 what it was supposed to at all, not whether it did so to two decimal places.
 """
-
-BOOTSTRAP_RESAMPLES = 4_000
-
-_CONFIDENCE = 0.95
 
 
 class Verdict(StrEnum):
@@ -178,45 +190,6 @@ class Comparison:
         return f"{moved}, against {self.predicted:+.2f} ms predicted. {self.reason}"
 
 
-def _bootstrap_difference_ci(
-    before: list[ReplaySample],
-    after: list[ReplaySample],
-    *,
-    seed: int,
-    resamples: int,
-) -> tuple[float, float]:
-    """The bootstrap route: resample sessions, then replays, then hits."""
-
-    def group(samples: list[ReplaySample]) -> list[list[np.ndarray]]:
-        buckets: dict[int, list[np.ndarray]] = {}
-        for sample in samples:
-            if sample.n:
-                buckets.setdefault(sample.session, []).append(
-                    np.asarray(sample.errors, dtype=float)
-                )
-        return list(buckets.values())
-
-    left, right = group(before), group(after)
-    if len(left) < 2 or len(right) < 2:
-        return (math.nan, math.nan)
-
-    rng = np.random.default_rng(seed)
-
-    def draw(sessions: list[list[np.ndarray]]) -> float:
-        pieces = []
-        for index in rng.integers(0, len(sessions), len(sessions)):
-            replays = sessions[index]
-            for pick in rng.integers(0, len(replays), len(replays)):
-                errors = replays[pick]
-                pieces.append(rng.choice(errors, size=errors.size, replace=True))
-        return float(np.concatenate(pieces).mean())
-
-    differences = np.array([draw(right) - draw(left) for _ in range(resamples)])
-    tail = (1.0 - _CONFIDENCE) / 2.0
-    low, high = np.quantile(differences, [tail, 1.0 - tail])
-    return (float(low), float(high))
-
-
 def _difference_ci(
     before: list[ReplaySample],
     after: list[ReplaySample],
@@ -224,27 +197,19 @@ def _difference_ci(
     seed: int,
     resamples: int,
 ) -> tuple[float, float]:
-    """The wider of the two routes to an interval on `after - before`.
+    """The interval on `after - before`, as progress puts it on the same split.
 
     On the difference rather than on each side separately: two intervals that
     overlap can still have a difference that excludes zero, and reading
     overlap as "no change" is a standard way to miss a real one.
 
-    Wider of the two rather than either alone, for the reason in the module
-    docstring. `(nan, nan)` only when neither route holds, which leaves the
-    comparison unmeasurable and is the honest outcome of not being able to put
-    an interval on the difference at all.
+    Which route won is dropped here rather than carried into
+    :class:`Comparison`. The verdict turns on where the interval sits relative
+    to zero and on nothing else, and a field nobody reads is a field that can
+    go stale without anything failing.
     """
-    routes = (
-        welch_difference_ci(before, after, confidence=_CONFIDENCE),
-        _bootstrap_difference_ci(before, after, seed=seed, resamples=resamples),
-    )
-    usable = [
-        interval for interval in routes if math.isfinite(interval[0]) and math.isfinite(interval[1])
-    ]
-    if not usable:
-        return (math.nan, math.nan)
-    return max(usable, key=lambda interval: interval[1] - interval[0])
+    low, high, _ = difference_interval(before, after, seed=seed, resamples=resamples)
+    return (low, high)
 
 
 def compare(

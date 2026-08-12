@@ -288,6 +288,38 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   only the default endpoint rather than the whole list. And a driver whose
   shortest shared engine period is its default one is reported as the offer it
   is, with nothing to do about it. None of the three recommends a change.
+- The map's own audio travels the chain the background already did, because the
+  viewer had no way to reach it: the parser never read `AudioFilename`, so no
+  layer below the page had ever seen the name. It is read in `[General]` beside
+  the other keys there rather than by a second pass over the raw sections — the
+  argument that keeps the background out of a second reader is the same one, and
+  two parsers that disagree about which file a map plays is a worse bug than the
+  one being fixed. The name reaches the page in the header, the payload carries
+  the resolved path with its existence checked at prepare time the way the
+  backdrop is, and `/api/replays/{name}/audio` serves the file read from disk at
+  request time with `.mp3`, `.ogg` and `.wav` mapped to their kinds. The whole
+  track in one response and no range requests: the page fetches it into a blob
+  before it plays anything. The policy gains `media-src 'self' blob:`, without
+  which the track downloads and is then refused — silence that reads as a play
+  with no song rather than as anything failing.
+- The viewer plays that track, against the clock it already keeps. Map time and
+  audio time are one timeline in osu! — a hit object's time is a timestamp into
+  the song — so the element's position is the clock the canvases are drawn from
+  and nothing else. Its rate is the mod rate times the chosen speed, because the
+  clock advances by both, and pitch is deliberately not preserved: Double Time
+  raises it in the game, and a track shifted back down to concert pitch is not
+  the sound the play was made against. The position is written on a seek, where
+  the size of the jump is known, and otherwise only once the two clocks have
+  walked 50 ms apart — never per frame, because assigning `currentTime` restarts
+  decoding and would buy a permanent stutter to fix a mismatch under the
+  threshold at which anyone notices one. The download is no longer part of
+  loading a replay: it happens after the field is on screen, so the picture
+  stops waiting on several megabytes it cannot draw anything from, and the
+  object URL is now owned by something that revokes it rather than pinning one
+  decoded track per replay browsed. A map that names no audio, a fetch that
+  fails, a download still in flight and an autoplay the browser refuses are all
+  the same silent replay — the fallback is silence, never a viewer that broke
+  because a song did not turn up. There is a mute, and it remembers nothing.
 - Dependabot watches `web/`'s npm dependencies, on the same weekly schedule the
   cargo and pip blocks use. `playwright-core` is held out of automatic bumps
   entirely, patch releases included: its version has to equal the browser build
@@ -298,6 +330,99 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   rather than implying all of them.
 
 ### Changed
+- The served page is a dashboard of four, and the front door is no longer the
+  replay viewer wearing `/`. There was no main page: opening the tool put a
+  player inside one replay with a corpus hidden behind a hash fragment, so the
+  two questions someone actually arrives with — is anything wrong, and what
+  happened last — could only be answered by loading a replay first. `/` is now
+  an overview built from the corpus answer and the newest play; `/replays/` is
+  the viewer, unchanged in behaviour and still one island, because the clock,
+  the track, the selection and the reviewer's keyboard all die on a navigation
+  and everything a review needs has to be reachable without one; `/corpus/` is
+  the corpus panel given a page instead of a view toggle; `/live/` is the plays
+  that have finished since that document was opened, which is the only genuinely
+  live thing this server has — the socket — and the page says so rather than
+  filling itself from the replay listing under a heading claiming those plays
+  just happened. The two addresses the single-page version answered are
+  honoured: `#corpus` and `#r=<replay>` on `/` are sent to the pages that took
+  them over, once, because an OBS scene pointed at one of them was told it could
+  stay there. `/doctor/` is deliberately not among them — the findings exist
+  only behind `forge doctor` on the command line and there is no endpoint to
+  read them from, and a route that renders nothing is worse than a route that
+  does not exist yet.
+- The renderer, the wire protocol and every analysis panel are untouched by that
+  split. What moved is which document mounts them, which is the whole reason
+  this shape was chosen over a rewrite. What the pages could not share, they now
+  share by name rather than by copy: the metric tile and the banner that were
+  byte-identical in two panels, the verification block that was private to the
+  corpus panel and is wanted by three pages, the fetch-and-watch that every page
+  does the same way, and the failure sentence, which now replaces the panel
+  instead of the whole page — a rejected token is fixed by restarting
+  `forge serve`, and a page that also took the navigation away would leave
+  nowhere to go.
+- The charts draw against one set of shared constants instead of a copy each.
+  Three files declared a chart width of 720, three declared a grid colour, three
+  declared a muted ink, and the one accent went by three different names; the
+  axis label was written out six times across them, and the tooltip's class list
+  was byte-identical in three. None of them disagreed, which is the only interesting
+  thing about them: three copies of a decision agree until one of them is
+  edited. The linear scale, the two nice-number helpers and the four judgement
+  colours move with them. The translator's function type was written out in
+  seven props interfaces and is now named once. Nothing about any picture
+  changes; this is the same geometry, said in one place.
+- `web/src/pages/ping.astro` is gone, as its own docstring said it would be. It
+  existed so a test could check "the server can serve more than one page"
+  against a real build rather than a fixture, and the real pages do that better:
+  the built-site tests point at `/corpus/` now. One of them had to be rewritten
+  rather than repointed. It asserted the second page carried no inline script
+  hash at all, which was only true because a page with no island ships no
+  hydration script; every real page ships one, and on this build every page's
+  scripts hash identically because Astro puts an island's identity in an element
+  attribute rather than in the script. So it asserts the half a real build can
+  show — that a page's policy names the scripts that page ships, all of them and
+  nothing besides — and the hand-written pages next door go on covering the half
+  it cannot, including the one a real build cannot show at all: a page that ships
+  no inline script is sent no hash.
+- The content-hashed bundles under `/_astro/` may be cached; everything else is
+  still `no-store`. The single-page version paid for 180 kB of JavaScript once,
+  and a dashboard was paying for it again on every navigation between its four
+  pages. Their URLs carry a hash of their contents, so a browser holding one is
+  holding the version it asked for and a rebuild is a new URL rather than a stale
+  answer. Nothing else is relaxed: a page has this run's token substituted into
+  its HTML, an API answer describes what the server knows at the moment it is
+  asked, and a 404 under the prefix is not cached either, since a missing bundle
+  kept for a year stays missing after it has arrived.
+- The server serves pages, plural. `Site` held one `index` string and
+  `load_site` read one `index.html`; every other file in the build went into the
+  asset table, so a second page would have been served from there as the bytes on
+  disk with `__TOKEN__` still in it. That page loads, looks finished, and is
+  answered 401 on every call it makes, with nothing on either side saying why —
+  the substitution is what the placeholder is for and the asset table has no
+  reason to know about it. Pages are keyed now by the URL a browser asks for,
+  which for a directory-format build is both `/ping/` and `/ping`, since a link
+  written one way is followed the other by some browsers and a redirect to
+  correct a slash is a round trip that buys nothing. Every `.html` is routed into
+  that table and out of the assets one on its extension rather than by name,
+  because a list of known page names is a thing the next page can be missing
+  from. The token exemption is membership of that table, and a page or asset
+  claiming a URL under `/api` or `/ws` is refused when the app is assembled
+  rather than filtered per request, so a page cannot be added that moves data out
+  from behind the token. `web/astro.config.mjs` states `build.format` and
+  `trailingSlash` instead of inheriting them: the file shape the build emits and
+  the URL shape the server keys on are two halves of one decision, and a default
+  changing under either side would move every page's URL with nothing in the
+  repository saying so. `web/src/pages/ping.astro` is the second page the tests
+  check a real build against, since a hand-written fixture cannot notice that
+  shape moving; it goes when the dashboard has real pages to put there.
+- The Content-Security-Policy is computed per page rather than once for the site.
+  Astro emits its own inline hydration script per page and the policy names the
+  exact hashes, so one policy for a multipage site would have to name the union
+  of them — which is also permission for page A's inline script to run inside
+  page B, where it was never shipped. An injected body that is already allowed is
+  most of what naming hashes was there to prevent, so the union is the one shape
+  the hashes must not take. A path holding no page is sent a policy naming no
+  inline script at all: an asset response and a 404 have no document for one to
+  run in.
 - The playback end-to-end test drives `forge serve` itself, and the test-only
   launcher that used to stand in for it is gone. The launcher existed only
   because the command line could not be imported off Windows; kept past that it
@@ -353,6 +478,103 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   interpreter down with no traceback. The engine still gets the smaller binary.
 
 ### Fixed
+- A link to a replay opened a different replay. `/replays/` mirrors the open
+  play into the address, and that effect ran once on mount with nothing selected
+  yet — `null` there means "not decided", but it was written out as an address
+  with no fragment, which stripped the `#r=` naming the play to open. The listing
+  that reads the fragment resolves later, by which time it was gone, so every
+  deep link fell back to whichever play was newest when the server started. The
+  page now reads the address on the way into that fetch rather than out of
+  `location` when it answers, and writes nothing until there is a selection to
+  write. This is the whole point of the front page: every card on `/` and
+  `/live/` is such a link.
+- The overview named the wrong play as the last one read. It took the first
+  entry of `/api/replays`, which is the newest only for the startup scan — every
+  play that finishes while the server runs is appended to the end of the table
+  that endpoint walks, so after the second play of an evening the front page was
+  naming a play from before the session began. The order is not the endpoint's
+  to change, since its other callers read it for its contents; the page decides
+  from `analysis.played_at` instead, which is the replay's own timestamp. A play
+  the simulation could not reproduce carries no timestamp and so is never picked
+  as the newest — nothing in its header says when it happened, and choosing it
+  would be a guess dressed as an answer.
+- The reasons a corpus may not recommend anything are shown one per line instead
+  of joined with a space. Each is a full sentence written by a different check,
+  with its own full stops inside it and no capital at the front, so run together
+  they read as one broken sentence rather than as two findings.
+- The check deciding which requests need no token asked a different question
+  than the router did. It read `request.url.path`, which Starlette rebuilds from
+  the scope as a string and splits again — so a percent-encoded `?` or `#` in
+  the path decodes into a delimiter and everything after it is dropped.
+  `/%3F../api/replays` therefore read as `/` to the exemption, which found it in
+  the page table and waved it through, while the router went on matching the
+  whole path. Nothing reachable came of it, because no handler answers that
+  spelling, but a request was being admitted on another URL's exemption. Both
+  read the routed path now, so there is one answer to which path a request is
+  for. The namespace check that refuses a page under `/api` or `/ws` also folds
+  case, which the router does not: it is what decides who is served without a
+  token, and it should not rest on a second component's case sensitivity to
+  stay true.
+- A beatmap could name a file outside its own folder and have the server read it.
+  The background and the audio track are both named by a line in the `.osu`, which
+  is a document downloaded from a stranger, and the name was joined to the map's
+  folder and then only checked for being a file. Joining discards the folder when
+  the name is absolute, so `AudioFilename: C:\Windows\win.ini` names that file and
+  passes the check; enough `..` gets to the same place. The endpoint would then
+  read it and hand it to the page. Both assets go through one resolution now that
+  requires the answer to still be inside the beatmap's folder and names nothing
+  when it is not — the way the module says it wants path traversal handled, as
+  something with no mechanism rather than something a filter has to catch. The
+  page could not have sent what it received anywhere, since `connect-src` is
+  `'self'`, but the read was real.
+- The corpus panel could name one era while the boundary under it described
+  another. Which epoch is current is read off the newest entry of a list, and the
+  same list decides the boundary — but the list was sorted by when a replay was
+  played and the boundary detection had since been taught to break ties on the
+  file name. Two replays sharing a timestamp then left "newest" to whichever the
+  caller happened to hand over last. Both sort alike now, which is what
+  `fill_epochs` says in its own docstring has to be true.
+- Nothing in the playfield faded in unless Hidden was on. The fade schedule was
+  written for the mod and returned a flat opacity for every play without it, so
+  every object inside the preempt window appeared at full strength at once, all
+  equally loud, with nothing saying which was due next. The game fades every
+  object in over `min(TimeFadeIn, TimePreempt)` whatever the mods are, and the
+  approach circle over twice that window — a ring far out faint and one about to
+  land solid, which is the whole timing signal. Objects fade out again over the
+  stay they already had, because fading in but not out left them vanishing at
+  full strength one frame after their end beside neighbours still arriving.
+- The spinner was drawn as a hairline. Its ring's width was a fixed share of a
+  radius that shrinks to a fifth of where it started, so it thinned to about a
+  pixel exactly when how much is left is worth reading. The width is fixed in
+  osu! pixels now, and does not follow Circle Size, which does not touch a
+  spinner in the game either.
+- A combo numeral sat on its object's head for the object's whole life, which on
+  a long slider is a number parked on top of the thing worth watching. It leaves
+  when the head is struck now, timed off the offset the replay recorded rather
+  than off when the object was due — and a miss, which records no offset because
+  there was no press to measure, keeps its numeral until the object goes.
+- The progress panel and the verification verdict still put two intervals on one
+  difference. Moving the Welch route into `clustering.welch_difference_ci` made
+  the two agree wherever that route was the wider of the pair, which read as the
+  problem being solved; the bootstrap route underneath was never shared. It was
+  written twice, over 10,000 resamples on one road and 4,000 on the other, and
+  out of two generator topologies — two independently seeded streams differenced
+  elementwise against both sides alternating down one stream. Over 24 corpora
+  carrying a real 7 ms move, three to six sessions a side, with the same seed and
+  resample count handed to both, the two blocks disagreed about the same boundary
+  in 21 of them; the three that agreed were the three the cluster route won on
+  both roads. In the sharpest case the two roads selected different routes
+  outright, each having weighed its own bootstrap width against the shared
+  cluster one. There is one construction now, `clustering.difference_interval`,
+  and one resample count behind both blocks.
+- `progress` could answer one folder two ways. It ordered on when a replay was
+  played and nothing else, while the verification beside it had already been
+  taught to break ties on the file name. `sorted` is stable, so replays sharing a
+  timestamp kept whatever order the caller held them in — alphabetical on the
+  command line, chronological on the panel — and the bootstrap resamples out of
+  those lists with one generator. One corpus whose replays share a stamp within
+  each session, shuffled twelve times, produced twelve different intervals. It
+  imposes the same tie-break the verification does now.
 - `forge diagnose` and the served panel could reach different verdicts about one
   journal. Verification split the corpus in whatever order its caller happened to
   hold it — alphabetical by replay file name on the command line, chronological
@@ -363,6 +585,14 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   entries are ordered inside the verification now, by when they were played and
   then by file name, so two replays sharing a timestamp cannot hand the decision
   back to the caller either.
+- Every beatmap background was blocked after a successful download. The endpoint
+  wants the session token, which cannot ride on an `<img src>`, so the page
+  fetches the image with the header and hands the response to the element as an
+  object URL — and the policy allowed `img-src 'self' data:` only, so the browser
+  refused to paint what it had just fetched. On the page that reads as a map with
+  no background rather than as anything failing. The policy admits `blob:` now,
+  which grants nothing further: only same-origin script can mint one, and
+  `script-src` allows no script this page did not ship with.
 - The corpus panel threw away the verification whenever the current-epoch corpus
   was too thin to diagnose. The diagnosis wants ten replays across three sessions
   and the comparison wants five across two a side, so the window where the panel

@@ -1,7 +1,9 @@
 import type { Analysis, Break, Finding, ReplayHeader } from "@/lib/protocol";
 import { causeOf } from "@/lib/cause";
 import { ErrorHistogram } from "@/components/ErrorHistogram";
-import type { Key } from "@/i18n";
+import { Metric } from "@/components/Parts";
+import { signed, stamp } from "@/lib/format";
+import type { Translator } from "@/i18n";
 
 /**
  * What the play cost, and where.
@@ -29,26 +31,8 @@ export interface AnalysisPanelProps {
   /** Needed for the map's own judgement windows: "40 ms late" means one thing
    *  at OD 4 and another at OD 9, so a cause is read against them. */
   header: ReplayHeader;
-  t: (key: Key, values?: Record<string, string | number>) => string;
+  t: Translator;
   onSeek?: (time: number) => void;
-}
-
-function Metric({
-  label,
-  value,
-  hint,
-}: {
-  label: string;
-  value: string;
-  hint?: string;
-}) {
-  return (
-    <div>
-      <div className="eyebrow">{label}</div>
-      <div className="text-display-xs tabular-nums">{value}</div>
-      {hint && <div className="mt-xxs text-body-sm text-mute">{hint}</div>}
-    </div>
-  );
 }
 
 function ratio(finding: Finding): number {
@@ -91,8 +75,6 @@ function BreakRow({
   header: ReplayHeader;
   onSeek?: (time: number) => void;
 }) {
-  const seconds = Math.max(0, Math.floor(item.time / 1000));
-  const stamp = `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}`;
   const cause = causeOf(item, header);
   return (
     <li>
@@ -102,7 +84,7 @@ function BreakRow({
         className="hairline-b block w-full cursor-pointer py-md text-left last:border-0 hover:text-ink-hover"
       >
         <div className="flex items-baseline justify-between gap-lg">
-          <span className="font-mono text-body-sm tabular-nums">{stamp}</span>
+          <span className="font-mono text-body-sm tabular-nums">{stamp(item.time)}</span>
           <span className="text-body-sm tabular-nums text-mute">
             −{item.combo_lost}x
           </span>
@@ -148,7 +130,7 @@ export function AnalysisPanel({ analysis, header, t, onSeek }: AnalysisPanelProp
         />
         <Metric
           label={t("analysis.meanError")}
-          value={mean === null ? "—" : `${mean >= 0 ? "+" : ""}${mean.toFixed(2)} ms`}
+          value={mean === null ? "—" : `${signed(mean, 2)} ms`}
           hint={t("analysis.biasHint")}
         />
         <Metric

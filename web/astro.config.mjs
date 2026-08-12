@@ -15,6 +15,16 @@ import tailwindcss from "@tailwindcss/vite";
 export default defineConfig({
   output: "static",
   outDir: "./dist",
+  // Stated rather than inherited, because the Python server keys its page table
+  // on the URL shape this produces: `directory` writes `corpus/index.html`,
+  // which is served at `/corpus/`. Left to the default, a later Astro release
+  // changing it would move every page's URL with nothing in this repo saying so,
+  // and the server would answer the moved page as a file it does not recognise.
+  build: { format: "directory" },
+  // Both `/corpus` and `/corpus/` reach the page. `never` or `always` would make
+  // one of the two a 404 in `astro dev` while the server answers both, which is
+  // a difference between development and a release that nothing would report.
+  trailingSlash: "ignore",
   integrations: [react()],
   vite: {
     plugins: [tailwindcss()],

@@ -1,6 +1,7 @@
 import { useMemo } from "react";
 import type { ReplayHeader } from "@/lib/protocol";
-import type { Key } from "@/i18n";
+import { GRADE_COLOURS } from "@/lib/chart";
+import type { Translator } from "@/i18n";
 
 /**
  * What the play is at the playhead, not what it ended as.
@@ -24,19 +25,12 @@ export interface LiveHudProps {
   header: ReplayHeader;
   /** Map time, milliseconds. */
   clock: number;
-  t: (key: Key, values?: Record<string, string | number>) => string;
+  t: Translator;
 }
 
 const RECENT = 12;
 const BAR_WIDTH = 260;
 const BAR_HEIGHT = 16;
-
-const GRADE_TOKENS = [
-  "var(--color-judge-miss)",
-  "var(--color-judge-50)",
-  "var(--color-judge-100)",
-  "var(--color-judge-300)",
-] as const;
 
 interface Judged {
   time: number;
@@ -127,13 +121,19 @@ export function LiveHud({ header, clock, t }: LiveHudProps) {
     <>
       <div
         className="pointer-events-none absolute left-md top-md rounded-sm bg-canvas/60 px-md py-xs font-mono text-body-sm tabular-nums"
+        // A generic element is not reliably given its `aria-label` by assistive
+        // technology, so the readout beside the field was labelled and then not
+        // announced. `group` rather than `status`: these numbers change on every
+        // frame of playback, and a live region would read them aloud
+        // continuously to someone who came here to watch a replay.
+        role="group"
         aria-label={t("player.liveStats")}
       >
         <span className="text-ink">{(accuracy * 100).toFixed(2)}%</span>
         <span className="text-mute"> · UR {unstable === null ? "—" : unstable.toFixed(0)}</span>
         <span className="ml-sm">
           {([3, 2, 1, 0] as const).map((grade) => (
-            <span key={grade} className="ml-xs" style={{ color: GRADE_TOKENS[grade] }}>
+            <span key={grade} className="ml-xs" style={{ color: GRADE_COLOURS[grade] }}>
               {so_far[grade]}
             </span>
           ))}
@@ -156,7 +156,7 @@ export function LiveHud({ header, clock, t }: LiveHudProps) {
               y={0}
               width={xAt(header.windows[window]!) - xAt(-header.windows[window]!)}
               height={BAR_HEIGHT}
-              fill={GRADE_TOKENS[3 - window]}
+              fill={GRADE_COLOURS[3 - window]}
               opacity={0.14}
             />
           ))}
@@ -168,7 +168,7 @@ export function LiveHud({ header, clock, t }: LiveHudProps) {
               y={2}
               width={2}
               height={BAR_HEIGHT - 4}
-              fill={GRADE_TOKENS[hit.grade]}
+              fill={GRADE_COLOURS[hit.grade]}
               opacity={0.25 + 0.75 * ((index + 1) / recent.length)}
             />
           ))}

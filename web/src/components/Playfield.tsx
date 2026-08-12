@@ -18,6 +18,13 @@ import { PlayfieldRenderer, type Disc, type Ribbon } from "@/lib/renderer";
  * **The approach ring uses the beatmap's own preempt.** Its radius is how much
  * time is left, so a wrong constant would make every judgement look mistimed by
  * the same amount — and look deliberate while doing it.
+ *
+ * **Everything fades in, with or without mods.** The game fades every object in
+ * over `HitObject.TimeFadeIn` and its approach circle over twice that, so at any
+ * moment one object is the loud one. Drawing the whole preempt window at full
+ * strength — which is what an unconditional alpha of 1 did — shows a map easier
+ * to read than the one that was played, for the same reason drawing an approach
+ * circle under Hidden would.
  */
 
 export interface PlayfieldProps {
@@ -31,7 +38,8 @@ export interface PlayfieldProps {
   /** Render Hidden the way the player saw it: no approach rings, objects
    *  fading in over the first 40% of the preempt and out over the next 30%,
    *  slider bodies thinning across their own duration. Off shows everything —
-   *  the analysis view of the same play. */
+   *  the analysis view of the same play, still fading each object in on the
+   *  game's ordinary schedule rather than snapping it on whole. */
   hidden?: boolean;
 }
 
@@ -51,6 +59,23 @@ const APPROACH_SCALE = 3;
 const HIDDEN_FADE_IN = 0.4;
 const HIDDEN_FADE_OUT = 0.3;
 
+/** How long an object takes to fade in, in map milliseconds — `TimeFadeIn` on
+ *  `HitObject` in ppy/osu, which is 400 ms and applies mods or not. Map time
+ *  rather than real, like the clock: under a rate mod the whole timeline runs
+ *  faster and the fade shortens with it, which is what the game does to every
+ *  animation under Double Time.
+ *
+ *  `DrawableHitCircle` fades the approach circle over `min(TimeFadeIn * 2,
+ *  TimePreempt)` instead — twice as slow, so a ring far out is faint and one
+ *  about to land is solid. That contrast is the whole timing signal, and it is
+ *  the reason the ring reads as a countdown rather than as decoration. */
+const TIME_FADE_IN = 400;
+
+/** The hit-circle outline's width, as a fraction of the object radius. The
+ *  spinner's ring is drawn to this same width in osu! pixels rather than to the
+ *  same fraction, so the two read as one instrument at two sizes. */
+const OUTLINE_WIDTH = 0.14;
+
 /** The follow area is this multiple of the object radius while tracking.
  *  `DrawableSliderBall.FOLLOW_AREA` in ppy/osu — read from the source rather
  *  than fitted, after a value fitted to this corpus turned out to be wrong. */
@@ -61,6 +86,13 @@ const LINGER = 240;
 
 /** How long a judgement mark stays up after the hit, in milliseconds. */
 const JUDGEMENT_LINGER = 380;
+
+/** The spinner ring's line width, in osu! pixels. A fixed width rather than a
+ *  share of the object radius: Circle Size does not touch a spinner in the
+ *  game, and a ring that thinned with CS would report something about the map
+ *  that is not true of it. Six is the hit-circle outline's weight at a middling
+ *  CS, so the two still read as one instrument. */
+const SPINNER_RING_WIDTH = 6;
 
 /** A spinner's outer ring at its start, in osu! pixels. Shrinks to the centre
  *  as it runs, which is the only thing that shows how much is left. */
@@ -212,23 +244,39 @@ export function Playfield({ header, samples, paths, clock, trail = 48, hidden = 
       colour[3] * alpha,
     ];
 
-    /** How visible this object is right now under Hidden, 1 without it. */
-    const hdAlpha = (object: HitObject): number => {
-      if (!hidden || object.kind === "spinner") return 1;
+    /** How visible this object is right now, 0 to 1. */
+    const alphaOf = (object: HitObject): number => {
       const appear = object.t - preempt;
-      const fadeIn = preempt * HIDDEN_FADE_IN;
       if (clock < appear) return 0;
-      if (clock < appear + fadeIn) return (clock - appear) / fadeIn;
-      if (object.kind === "slider") {
-        // The body thins across its own duration, so the tail is played from
-        // memory of the shape rather than sight of it — as the mod plays.
-        if (clock < object.t) return 1;
-        const span = Math.max(1, object.end - object.t);
-        return Math.max(0, 1 - (clock - object.t) / span);
+
+      // Hidden replaces the schedule outright for what it touches. It leaves
+      // spinners alone, so one takes the ordinary fade under the mod too.
+      if (hidden && object.kind !== "spinner") {
+        const fadeIn = preempt * HIDDEN_FADE_IN;
+        if (clock < appear + fadeIn) return (clock - appear) / fadeIn;
+        if (object.kind === "slider") {
+          // The body thins across its own duration, so the tail is played from
+          // memory of the shape rather than sight of it — as the mod plays.
+          if (clock < object.t) return 1;
+          const span = Math.max(1, object.end - object.t);
+          return Math.max(0, 1 - (clock - object.t) / span);
+        }
+        const fadeOut = preempt * HIDDEN_FADE_OUT;
+        if (clock < appear + fadeIn + fadeOut) return 1 - (clock - (appear + fadeIn)) / fadeOut;
+        return 0;
       }
-      const fadeOut = preempt * HIDDEN_FADE_OUT;
-      if (clock < appear + fadeIn + fadeOut) return 1 - (clock - (appear + fadeIn)) / fadeOut;
-      return 0;
+
+      // The preempt caps the fade because it is the whole window there is: an
+      // object still fading in at the moment it is due would be a difficulty
+      // the map does not have. AR 10 is a 450 ms preempt, so the cap is never
+      // far away.
+      const arrived = Math.min(1, (clock - appear) / Math.min(TIME_FADE_IN, preempt));
+      if (clock <= object.end) return arrived;
+      // And out again across the stay it already had. Fading in but not out
+      // left objects vanishing at full strength one frame after their end,
+      // beside neighbours still arriving — which reads as a flicker rather
+      // than as something finishing.
+      return Math.max(0, arrived * (1 - (clock - object.end) / LINGER));
     };
 
     for (let i = 0; i < header.objects.length; i++) {
@@ -237,7 +285,7 @@ export function Playfield({ header, samples, paths, clock, trail = 48, hidden = 
       const grade = header.judgements[i]?.grade ?? 3;
       const colour = palette.judged[Math.min(3, Math.max(0, grade))]!;
       const active = clock >= object.t && clock <= object.end;
-      const visible = hdAlpha(object);
+      const visible = alphaOf(object);
 
       if (object.kind === "spinner") {
         // Was missing entirely. The outer ring shrinking toward the centre is
@@ -245,14 +293,26 @@ export function Playfield({ header, samples, paths, clock, trail = 48, hidden = 
         // as a static circle tells a viewer nothing.
         const span = Math.max(1, object.end - object.t);
         const progress = Math.min(1, Math.max(0, (clock - object.t) / span));
+        const ring = SPINNER_RADIUS * (1 - progress * 0.82);
         discs.push({
           x: 256,
           y: 192,
-          radius: SPINNER_RADIUS * (1 - progress * 0.82),
-          inner: 0.97,
-          colour: active ? colour : palette.approach,
+          radius: ring,
+          // `inner` is a fraction of the outer radius, so a fixed 0.97 is a
+          // line three per cent of a radius that shrinks to a fifth of where
+          // it started: about a pixel wide by the end, which is exactly when
+          // how much is left is worth reading. Solving `inner` from a width in
+          // osu! pixels keeps the line one weight all the way in.
+          inner: Math.max(0, 1 - SPINNER_RING_WIDTH / ring),
+          colour: dim(active ? colour : palette.approach, visible),
         });
-        discs.push({ x: 256, y: 192, radius: radius * 0.35, inner: 0, colour });
+        discs.push({
+          x: 256,
+          y: 192,
+          radius: radius * 0.35,
+          inner: 0,
+          colour: dim(colour, visible),
+        });
         continue;
       }
 
@@ -339,7 +399,13 @@ export function Playfield({ header, samples, paths, clock, trail = 48, hidden = 
 
       // A ring rather than a disc: the object outline, at the object radius.
       if (visible > 0.02) {
-        discs.push({ x: object.x, y: object.y, radius, inner: 0.86, colour: dim(colour, visible) });
+        discs.push({
+          x: object.x,
+          y: object.y,
+          radius,
+          inner: 1 - OUTLINE_WIDTH,
+          colour: dim(colour, visible),
+        });
       }
 
       // Hidden's defining absence: the mod removes the approach circle
@@ -348,6 +414,11 @@ export function Playfield({ header, samples, paths, clock, trail = 48, hidden = 
       if (clock < object.t && !hidden) {
         const remaining = (object.t - clock) / preempt;
         const scale = 1 + APPROACH_SCALE * remaining;
+        // The ring carried no fade at all before this, which is what made a
+        // busy preempt window unreadable: eight rings at one strength say
+        // nothing about which of the eight is next.
+        const ringIn = Math.min(TIME_FADE_IN * 2, preempt);
+        const ringAlpha = Math.min(1, (clock - (object.t - preempt)) / ringIn);
         discs.push({
           x: object.x,
           y: object.y,
@@ -355,7 +426,12 @@ export function Playfield({ header, samples, paths, clock, trail = 48, hidden = 
           // Thinner as it grows, so the ring stays one line wide on screen
           // instead of becoming a thick band at the moment it appears.
           inner: 1 - 0.06 / scale,
-          colour: palette.approach,
+          // Compounded with the object's own fade rather than standing alone.
+          // In ppy/osu the approach circle is a child of the drawable that is
+          // itself fading in over `TimeFadeIn`, and a child's alpha multiplies
+          // its parent's — so a ring drawn at its own alpha only is up to twice
+          // as bright as the game's for the first 400 ms of every preempt.
+          colour: dim(palette.approach, ringAlpha * visible),
         });
       }
 
@@ -469,13 +545,35 @@ export function Playfield({ header, samples, paths, clock, trail = 48, hidden = 
       if (clock < object.t - preempt || clock > object.end + LINGER) continue;
       if (object.kind === "spinner") continue;
 
+      const since = clock - object.t;
+
       // The combo number. Not on the wire — it is the count since the last
       // new-combo flag, which the page can derive and the server would only be
       // duplicating. Under Hidden it fades with its object.
+      //
+      // It leaves when the head is struck, over the judgement's own window,
+      // rather than staying until the object ends: on a long slider a numeral
+      // parked on the head for the whole body is clutter sitting on top of the
+      // thing worth watching. It does not travel the path — the game does not
+      // move it, and the ball is already there doing that job, so a numeral
+      // riding along would be a second marker for one position.
       const number = combo[i];
-      const visible = hdAlpha(object);
-      if (number && visible > 0.02) {
-        ctx.fillStyle = tone(palette!.cursor, 0.92 * visible);
+      const visible = alphaOf(object);
+      // From when the object was actually struck, not from when it was due. The
+      // offset is on the wire and it is the whole subject of this page, so
+      // reading the exit off the due time would animate a hit that did not
+      // happen there — on a 40 ms late tap, visibly so.
+      //
+      // A miss carries no error, because there was no press to measure it
+      // against. So there is no moment to leave at either: the numeral stays
+      // with its object and goes when the object does. Reading the absent error
+      // as zero would start the exit dead on time on precisely the objects
+      // where nothing happened.
+      const offset = header.judgements[i]?.error ?? null;
+      const afterHit = offset === null ? 0 : clock - (object.t + offset);
+      const struck = afterHit <= 0 ? 1 : 1 - afterHit / JUDGEMENT_LINGER;
+      if (number && visible > 0.02 && struck > 0.02) {
+        ctx.fillStyle = tone(palette!.cursor, 0.92 * visible * struck);
         ctx.font = `${Math.round(radius * scale * 0.95)}px Inter, system-ui, sans-serif`;
         ctx.fillText(String(number), sx(object.x), sy(object.y));
       }
@@ -483,7 +581,6 @@ export function Playfield({ header, samples, paths, clock, trail = 48, hidden = 
       // How late the hit was, at the moment it was judged. This is the number
       // osu! never shows on a replay and the reason to be watching here.
       const judgement = header.judgements[i];
-      const since = clock - object.t;
       if (
         object.kind === "circle" &&
         judgement &&

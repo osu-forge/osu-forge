@@ -71,6 +71,7 @@ __all__ = [
     "SAMPLE_BYTES",
     "SCHEMA_VERSION",
     "ReplayPayload",
+    "beside_beatmap",
     "corpus_payload",
     "encode_frames",
     "encode_paths",
@@ -432,6 +433,37 @@ def corpus_payload(
     }
 
 
+def beside_beatmap(beatmap_path: Path, name: str | None) -> Path | None:
+    """A file a beatmap names, only when it really sits in the beatmap's folder.
+
+    The name comes out of a `.osu` file, which is a document downloaded from a
+    stranger, and it reaches an endpoint that reads bytes off disk. Joining it
+    to the folder is not enough on its own: `Path("C:/Songs/map") / "C:/x"` is
+    `C:/x`, because joining an absolute path discards what it was joined to, and
+    a relative name with enough `..` in it walks out the same way. Either one
+    then passes an `is_file` check and names a file the asker chose.
+
+    So the answer is resolved and required to still be under the folder. A name
+    that leaves it names nothing, which is the same answer the caller already
+    has to handle for a map whose asset was deleted — rather than a filter that
+    has to enumerate the ways out.
+
+    `None` for a name that is absent, empty, escapes, or is not a file.
+    """
+    if not name:
+        return None
+    folder = beatmap_path.parent.resolve()
+    try:
+        candidate = (folder / name).resolve()
+    except OSError:
+        # A name Windows will not even parse into a path. Unreadable and
+        # unnameable are the same outcome here.
+        return None
+    if not candidate.is_relative_to(folder):
+        return None
+    return candidate if candidate.is_file() else None
+
+
 @dataclass(frozen=True, slots=True)
 class ReplayPayload:
     """Everything a renderer needs for one replay, ready to serialise."""
@@ -452,6 +484,15 @@ class ReplayPayload:
     replay; which file that means was decided here, not by the asker.
     """
 
+    audio: Path | None = None
+    """The map's audio track on disk, when it has one that exists.
+
+    A path for the same reason the background is one, and more so: a song is
+    several megabytes and every payload stays resident for the life of the
+    process, so holding the tracks would let the songs folder decide how much
+    memory serving one evening's replays costs.
+    """
+
     @classmethod
     def build(
         cls,
@@ -462,6 +503,7 @@ class ReplayPayload:
         rate: float,
         analysis: dict[str, Any] | None = None,
         background: Path | None = None,
+        audio: Path | None = None,
         mods: int = 0,
     ) -> ReplayPayload:
         counts = simulation.counts()
@@ -488,7 +530,16 @@ class ReplayPayload:
                 "circle_size": beatmap.circle_size,
                 "approach_rate": beatmap.approach_rate,
                 "overall_difficulty": beatmap.overall_difficulty,
-                "background": beatmap.background,
+                # The names rather than URLs, and the names of the files that
+                # were actually found rather than the ones the beatmap asked
+                # for. A client asks for the asset by replay name, so a name
+                # here says only whether there is one to ask for — and if it
+                # said so from the `.osu` line alone it would send the page
+                # after a track that had been deleted, or moved out of the
+                # folder, and answer it 404. Then the saved request the name is
+                # here to save is the one case it does not save.
+                "background": background.name if background is not None else None,
+                "audio": audio.name if audio is not None else None,
             },
             "windows": simulation.windows,
             "counts": {
@@ -523,4 +574,5 @@ class ReplayPayload:
             frames=encode_frames(simulation.frames.frames),
             paths=paths,
             background=background,
+            audio=audio,
         )

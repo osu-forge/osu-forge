@@ -306,8 +306,11 @@ def test_a_replay_plays_back_in_a_real_browser(tmp_path: Path) -> None:
             [
                 str(node),
                 str(DRIVER),
+                # The viewer's own page. `/` is the overview now, and it has no
+                # playfield on it by design — the whole point of the dashboard
+                # split is that the front page answers without loading a replay.
                 "--url",
-                url,
+                f"{url}replays/",
                 "--out",
                 str(shots),
                 "--executable",

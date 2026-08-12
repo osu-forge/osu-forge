@@ -21,6 +21,11 @@ from osuforge.analysis.progress import (
 START = datetime(2026, 7, 1, 19, 0, tzinfo=UTC)
 RESAMPLES = 400
 
+# Rotating rather than repeating, so alphabetical order and chronological order
+# really do disagree about which replay inside a session comes first. The file
+# name says which map was played, never when.
+MAPS = ("Anamanaguchi - Meow", "Mid - Some Map", "Zun - Bad Apple")
+
 
 def block(
     *,
@@ -77,6 +82,49 @@ def flat_block(
             played_at=START + timedelta(days=first_session + offset, minutes=5 * index),
             session=first_session + offset,
             errors=[error] * hits,
+            miss_rate=0.02,
+            accuracy=0.97,
+            breaks=1,
+        )
+        for offset in range(sessions)
+        for index in range(replays)
+    ]
+
+
+def tied_block(
+    *,
+    mean: float,
+    sessions: int,
+    first_session: int = 0,
+    replays: int = 3,
+    hits: int = 150,
+    sigma: float = 12.0,
+    seed: int = 3,
+) -> list[Entry]:
+    """A session whose replays all carry one timestamp, named after the map.
+
+    `block` spaces them five minutes apart, which orders them the same way
+    whatever order the caller held them in. Replays sharing a stamp are the
+    case where a stable sort has nothing left to sort by and the caller's
+    order stands. The name leads with the map so that sorting by it cuts
+    across the sessions rather than agreeing with them, which is what the two
+    callers really do to one folder. The map rotates with the session as well
+    as the replay, so the two orders disagree inside a session and not only
+    about which session comes first — a rotation that agreed inside the
+    sessions would leave the stable sort putting both callers back on one list.
+    """
+    rng = np.random.default_rng(seed)
+    return [
+        Entry(
+            replay=(
+                f"{MAPS[(first_session + offset + index) % len(MAPS)]} - "
+                f"s{first_session + offset}r{index}.osr"
+            ),
+            beatmap_hash="map-a",
+            beatmap="Artist - Title [map-a]",
+            played_at=START + timedelta(days=first_session + offset),
+            session=first_session + offset,
+            errors=rng.normal(mean, sigma, hits).tolist(),
             miss_rate=0.02,
             accuracy=0.97,
             breaks=1,
@@ -194,6 +242,57 @@ class TestFallbackAndRefusal:
         result = progress([])
         assert result.points == []
         assert result.insufficient is not None
+
+
+class TestOneCorpusOneAnswer:
+    """One folder is answered one way, whoever hands it over.
+
+    `forge diagnose` gathers alphabetically by file name and the served panel
+    by when the replay was played. The bootstrap resamples sessions and then
+    replays out of the lists it is given, drawing from one generator, so two
+    orders of one corpus walk that generator differently and land on different
+    intervals — which is a property of the caller, not of the play.
+    """
+
+    @staticmethod
+    def orders() -> tuple[list[list[Entry]], dict[str, str]]:
+        before = tied_block(mean=8.0, sessions=4, seed=11)
+        after = tied_block(mean=1.0, sessions=4, first_session=4, seed=12)
+        entries = before + after
+        epochs = epochs_for(before, "aaaa000000000000") | epochs_for(after, "bbbb111111111111")
+        return (
+            [
+                sorted(entries, key=lambda entry: entry.replay),
+                sorted(entries, key=lambda entry: entry.played_at),
+                list(reversed(entries)),
+                entries[7:] + entries[:7],
+            ],
+            epochs,
+        )
+
+    def test_the_bootstrap_route_is_the_one_reported(self) -> None:
+        # Asserted first: the cluster route reads session moments and does not
+        # care what order they arrived in, so a corpus it wins would pass the
+        # test below without the ordering having been fixed at all.
+        orders, epochs = self.orders()
+        result = progress(orders[0], epochs=epochs, resamples=RESAMPLES)
+        assert result.shift is not None
+        assert result.shift.ci_source == "bootstrap"
+
+    def test_the_two_caller_orders_really_are_two_orders(self) -> None:
+        # Without this the test below could be handed one list twice under two
+        # names, and would pass on a corpus it never split two ways.
+        orders, _ = self.orders()
+        assert orders[0] != orders[1]
+
+    def test_the_callers_order_does_not_decide_the_interval(self) -> None:
+        orders, epochs = self.orders()
+        intervals = set()
+        for order in orders:
+            result = progress(order, epochs=epochs, resamples=RESAMPLES)
+            assert result.shift is not None
+            intervals.add((result.shift.ci_low, result.shift.ci_high))
+        assert len(intervals) == 1
 
 
 class TestSeries:

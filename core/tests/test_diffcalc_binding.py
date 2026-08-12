@@ -83,6 +83,14 @@ class TestParsing:
         with pytest.raises(diffcalc.BeatmapError, match="nonexistent"):
             diffcalc.Beatmap.from_file("nonexistent.osu")
 
+    def test_the_audio_file_name_crosses_the_boundary(self) -> None:
+        # The name the server resolves against the map's folder to serve the
+        # song, so Python getting `None` here is a play with no sound rather
+        # than anything that looks like a failure.
+        text = MINIMAL.replace("[General]\n", "[General]\nAudioFilename: track.mp3\n")
+        assert beatmap(text).audio == "track.mp3"
+        assert beatmap().audio is None
+
 
 class TestGeometry:
     def test_radius_matches_the_circle_size_formula(self) -> None:

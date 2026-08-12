@@ -9,6 +9,7 @@ from pathlib import Path
 
 import pytest
 
+from osuforge.server.protocol import beside_beatmap
 from osuforge.server.security import (
     DEFAULT_PORT,
     RESERVED_PORTS,
@@ -154,3 +155,58 @@ class TestRuntimeFile:
     def test_the_default_location_is_outside_the_osu_install(self) -> None:
         assert "osu!" not in str(runtime_file())
         assert runtime_file().name == "runtime.json"
+
+
+class TestBesideBeatmap:
+    """A beatmap names its own background and its own track, and a beatmap is a
+    document downloaded from a stranger. The name reaches an endpoint that reads
+    bytes off disk, so the folder it claims to be in has to be the folder it
+    ends up in.
+    """
+
+    def beatmap(self, root: Path) -> Path:
+        folder = root / "Songs" / "1234 Artist - Title"
+        folder.mkdir(parents=True)
+        (folder / "audio.mp3").write_bytes(b"ID3")
+        (folder / "bg.jpg").write_bytes(b"\xff\xd8")
+        return folder / "map.osu"
+
+    def test_a_name_beside_the_beatmap_resolves(self, tmp_path: Path) -> None:
+        osu = self.beatmap(tmp_path)
+        found = beside_beatmap(osu, "audio.mp3")
+        assert found is not None and found.name == "audio.mp3"
+
+    def test_a_subfolder_of_the_map_is_still_the_map(self, tmp_path: Path) -> None:
+        # Rare but legal: some maps keep their assets one level down.
+        osu = self.beatmap(tmp_path)
+        nested = osu.parent / "sb"
+        nested.mkdir()
+        (nested / "track.ogg").write_bytes(b"OggS")
+        assert beside_beatmap(osu, "sb/track.ogg") is not None
+
+    def test_an_absolute_name_names_nothing(self, tmp_path: Path) -> None:
+        # Joining an absolute path discards what it was joined to, so this is
+        # the shortest way out of the folder and it needs no `..` at all.
+        osu = self.beatmap(tmp_path)
+        outside = tmp_path / "secret.txt"
+        outside.write_bytes(b"not a song")
+        assert beside_beatmap(osu, str(outside)) is None
+
+    def test_a_name_that_walks_out_names_nothing(self, tmp_path: Path) -> None:
+        osu = self.beatmap(tmp_path)
+        outside = tmp_path / "secret.txt"
+        outside.write_bytes(b"not a song")
+        assert beside_beatmap(osu, "../../secret.txt") is None
+
+    def test_a_missing_file_names_nothing(self, tmp_path: Path) -> None:
+        assert beside_beatmap(self.beatmap(tmp_path), "gone.mp3") is None
+
+    def test_a_folder_is_not_a_file(self, tmp_path: Path) -> None:
+        # An empty AudioFilename resolves to the folder, which exists.
+        osu = self.beatmap(tmp_path)
+        assert beside_beatmap(osu, ".") is None
+
+    def test_no_name_at_all(self, tmp_path: Path) -> None:
+        osu = self.beatmap(tmp_path)
+        assert beside_beatmap(osu, None) is None
+        assert beside_beatmap(osu, "") is None
