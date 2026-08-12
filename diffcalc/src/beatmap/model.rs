@@ -336,6 +336,13 @@ pub struct Metadata {
     /// wants to show the map needs it, and opening the file again to fish out
     /// one line is how a project ends up with two parsers that disagree.
     pub background: Option<String>,
+    /// File name of the audio track, relative to the beatmap's folder.
+    ///
+    /// From `[General]` for the same reason [`Metadata::background`] comes from
+    /// `[Events]`: anything that plays the map back needs it, and the raw
+    /// sections being kept is not an invitation to read that one line again
+    /// somewhere else.
+    pub audio: Option<String>,
 }
 
 /// Whether stack heights on a beatmap mean anything.

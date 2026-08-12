@@ -288,6 +288,38 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   only the default endpoint rather than the whole list. And a driver whose
   shortest shared engine period is its default one is reported as the offer it
   is, with nothing to do about it. None of the three recommends a change.
+- The map's own audio travels the chain the background already did, because the
+  viewer had no way to reach it: the parser never read `AudioFilename`, so no
+  layer below the page had ever seen the name. It is read in `[General]` beside
+  the other keys there rather than by a second pass over the raw sections — the
+  argument that keeps the background out of a second reader is the same one, and
+  two parsers that disagree about which file a map plays is a worse bug than the
+  one being fixed. The name reaches the page in the header, the payload carries
+  the resolved path with its existence checked at prepare time the way the
+  backdrop is, and `/api/replays/{name}/audio` serves the file read from disk at
+  request time with `.mp3`, `.ogg` and `.wav` mapped to their kinds. The whole
+  track in one response and no range requests: the page fetches it into a blob
+  before it plays anything. The policy gains `media-src 'self' blob:`, without
+  which the track downloads and is then refused — silence that reads as a play
+  with no song rather than as anything failing.
+- The viewer plays that track, against the clock it already keeps. Map time and
+  audio time are one timeline in osu! — a hit object's time is a timestamp into
+  the song — so the element's position is the clock the canvases are drawn from
+  and nothing else. Its rate is the mod rate times the chosen speed, because the
+  clock advances by both, and pitch is deliberately not preserved: Double Time
+  raises it in the game, and a track shifted back down to concert pitch is not
+  the sound the play was made against. The position is written on a seek, where
+  the size of the jump is known, and otherwise only once the two clocks have
+  walked 50 ms apart — never per frame, because assigning `currentTime` restarts
+  decoding and would buy a permanent stutter to fix a mismatch under the
+  threshold at which anyone notices one. The download is no longer part of
+  loading a replay: it happens after the field is on screen, so the picture
+  stops waiting on several megabytes it cannot draw anything from, and the
+  object URL is now owned by something that revokes it rather than pinning one
+  decoded track per replay browsed. A map that names no audio, a fetch that
+  fails, a download still in flight and an autoplay the browser refuses are all
+  the same silent replay — the fallback is silence, never a viewer that broke
+  because a song did not turn up. There is a mute, and it remembers nothing.
 - Dependabot watches `web/`'s npm dependencies, on the same weekly schedule the
   cargo and pip blocks use. `playwright-core` is held out of automatic bumps
   entirely, patch releases included: its version has to equal the browser build
@@ -353,6 +385,44 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   interpreter down with no traceback. The engine still gets the smaller binary.
 
 ### Fixed
+- A beatmap could name a file outside its own folder and have the server read it.
+  The background and the audio track are both named by a line in the `.osu`, which
+  is a document downloaded from a stranger, and the name was joined to the map's
+  folder and then only checked for being a file. Joining discards the folder when
+  the name is absolute, so `AudioFilename: C:\Windows\win.ini` names that file and
+  passes the check; enough `..` gets to the same place. The endpoint would then
+  read it and hand it to the page. Both assets go through one resolution now that
+  requires the answer to still be inside the beatmap's folder and names nothing
+  when it is not — the way the module says it wants path traversal handled, as
+  something with no mechanism rather than something a filter has to catch. The
+  page could not have sent what it received anywhere, since `connect-src` is
+  `'self'`, but the read was real.
+- The corpus panel could name one era while the boundary under it described
+  another. Which epoch is current is read off the newest entry of a list, and the
+  same list decides the boundary — but the list was sorted by when a replay was
+  played and the boundary detection had since been taught to break ties on the
+  file name. Two replays sharing a timestamp then left "newest" to whichever the
+  caller happened to hand over last. Both sort alike now, which is what
+  `fill_epochs` says in its own docstring has to be true.
+- Nothing in the playfield faded in unless Hidden was on. The fade schedule was
+  written for the mod and returned a flat opacity for every play without it, so
+  every object inside the preempt window appeared at full strength at once, all
+  equally loud, with nothing saying which was due next. The game fades every
+  object in over `min(TimeFadeIn, TimePreempt)` whatever the mods are, and the
+  approach circle over twice that window — a ring far out faint and one about to
+  land solid, which is the whole timing signal. Objects fade out again over the
+  stay they already had, because fading in but not out left them vanishing at
+  full strength one frame after their end beside neighbours still arriving.
+- The spinner was drawn as a hairline. Its ring's width was a fixed share of a
+  radius that shrinks to a fifth of where it started, so it thinned to about a
+  pixel exactly when how much is left is worth reading. The width is fixed in
+  osu! pixels now, and does not follow Circle Size, which does not touch a
+  spinner in the game either.
+- A combo numeral sat on its object's head for the object's whole life, which on
+  a long slider is a number parked on top of the thing worth watching. It leaves
+  when the head is struck now, timed off the offset the replay recorded rather
+  than off when the object was due — and a miss, which records no offset because
+  there was no press to measure, keeps its numeral until the object goes.
 - The progress panel and the verification verdict still put two intervals on one
   difference. Moving the Welch route into `clustering.welch_difference_ci` made
   the two agree wherever that route was the wider of the pair, which read as the

@@ -191,6 +191,15 @@ pub fn parse(data: &[u8]) -> Result<Beatmap, ParseError> {
                             _ => return Err(ParseError::UnsupportedMode { mode_id: id }),
                         }
                     }
+                    "AudioFilename" => {
+                        // An empty value is treated as no line at all. The name
+                        // is resolved against the beatmap's folder downstream,
+                        // and an empty one resolves to the folder itself — a
+                        // path that exists and is not a song, which is a worse
+                        // answer than admitting the map names no audio.
+                        let name = value.trim();
+                        metadata.audio = (!name.is_empty()).then(|| name.to_string());
+                    }
                     "StackLeniency" => stack_leniency = parser.f64(value, "StackLeniency")?,
                     "AudioLeadIn" => audio_lead_in = parser.i32(value, "AudioLeadIn")?,
                     "PreviewTime" => preview_time = parser.i32(value, "PreviewTime")?,
@@ -780,6 +789,39 @@ mod tests {
         fn end_time_is_none_for_non_sliders() {
             let b = map("osu file format v14\n[HitObjects]\n0,0,0,1,0\n");
             assert_eq!(b.slider_end_time(&b.hit_objects[0]), None);
+        }
+    }
+
+    mod audio {
+        use super::*;
+
+        #[test]
+        fn the_audio_file_name_is_read_from_general() {
+            let text = "osu file format v14\n[General]\nAudioFilename: audio.mp3\nMode: 0\n";
+            assert_eq!(map(text).metadata.audio.as_deref(), Some("audio.mp3"));
+        }
+
+        #[test]
+        fn a_name_with_spaces_survives_intact() {
+            // Only the padding around the value is the format's; the spaces
+            // inside are part of the file name on disk, and trimming them would
+            // name a file that is not there.
+            let text = "osu file format v14\n[General]\nAudioFilename:  my song.ogg \n";
+            assert_eq!(map(text).metadata.audio.as_deref(), Some("my song.ogg"));
+        }
+
+        #[test]
+        fn an_empty_value_names_no_file_rather_than_the_folder() {
+            // "" resolved against the beatmap's folder is the folder, which
+            // exists — so a consumer checking the path would believe the map
+            // had audio and hand a directory to whatever plays it.
+            let text = "osu file format v14\n[General]\nAudioFilename:\n";
+            assert_eq!(map(text).metadata.audio, None);
+        }
+
+        #[test]
+        fn a_file_without_the_line_has_none() {
+            assert_eq!(map(MINIMAL).metadata.audio, None);
         }
     }
 

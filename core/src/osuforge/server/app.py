@@ -163,8 +163,14 @@ def build_app(
             raise HTTPException(status_code=404, detail="no such replay")
         return Response(content=payload.paths, media_type="application/octet-stream")
 
+    # Deliberately not `async`. These two are the only handlers that touch the
+    # disk, and a blocking read inside a coroutine holds the event loop for its
+    # whole duration — every other request and the live socket's broadcasts
+    # among them, for as long as a several-megabyte read off a cold spinning
+    # disk takes. Declared synchronously, FastAPI runs them in its threadpool
+    # instead, which is where a blocking read belongs.
     @app.get("/api/replays/{name}/background")
-    async def background(name: str) -> Response:
+    def background(name: str) -> Response:
         # The one response read from disk at request time — and the path was
         # resolved when the payload was prepared, so the request still only
         # names a replay. Holding megabytes of JPEG per payload resident would
@@ -181,6 +187,32 @@ def build_app(
             raise HTTPException(status_code=404, detail="no background") from exc
         suffix = found.suffix.lower()
         kinds = {".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".png": "image/png"}
+        return Response(content=body, media_type=kinds.get(suffix, "application/octet-stream"))
+
+    @app.get("/api/replays/{name}/audio")
+    def audio(name: str) -> Response:
+        # Read from disk at request time like the background, and resolved when
+        # the payload was prepared for the same reason: the request names a
+        # replay, never a file.
+        #
+        # The whole track in one response, with no range support. The page
+        # fetches it into a blob before it plays anything, so a partial response
+        # would only add a code path neither side uses.
+        payload = payloads.get(name)
+        found = getattr(payload, "audio", None)
+        if payload is None or found is None:
+            raise HTTPException(status_code=404, detail="no audio")
+        try:
+            body = found.read_bytes()
+        except OSError as exc:
+            # Deleted or unreadable since startup, which is the same answer to
+            # the page as a map that never had a track beside it.
+            raise HTTPException(status_code=404, detail="no audio") from exc
+        suffix = found.suffix.lower()
+        # mp3 and ogg are what beatmaps in the wild carry; wav is here because
+        # the format allows it, and anything else is served as bytes rather
+        # than named a kind it might not be.
+        kinds = {".mp3": "audio/mpeg", ".ogg": "audio/ogg", ".wav": "audio/wav"}
         return Response(content=body, media_type=kinds.get(suffix, "application/octet-stream"))
 
     @app.websocket("/ws")

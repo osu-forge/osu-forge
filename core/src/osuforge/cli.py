@@ -652,7 +652,7 @@ def _serve(args: argparse.Namespace) -> int:
         reduce_play,
         serve,
     )
-    from osuforge.server.protocol import analysis_payload
+    from osuforge.server.protocol import analysis_payload, beside_beatmap
     from osuforge.sources import osudb
 
     try:
@@ -737,12 +737,12 @@ def _serve(args: argparse.Namespace) -> int:
         # still worth playing back — so the failure costs the numbers, not the
         # replay.
         play = analyse(path, index)
-        # Checked rather than assumed, as the static page did: a map whose
-        # background was deleted would otherwise 404 on every open.
-        backdrop: Path | None = None
-        if judged.beatmap.background:
-            candidate = judged.beatmap_path.parent / judged.beatmap.background
-            backdrop = candidate if candidate.is_file() else None
+        # Both resolved through one helper, which checks the file is there and
+        # that the name did not walk out of the map's folder to reach it. A map
+        # whose asset was deleted would otherwise 404 on every open, and a name
+        # that escapes would name whatever it liked.
+        backdrop = beside_beatmap(judged.beatmap_path, judged.beatmap.background)
+        song = beside_beatmap(judged.beatmap_path, judged.beatmap.audio)
         return ReplayPayload.build(
             replay_name=path.name,
             beatmap=judged.played,
@@ -750,6 +750,7 @@ def _serve(args: argparse.Namespace) -> int:
             rate=judged.replay.rate,
             analysis=None if isinstance(play, str) else analysis_payload(play),
             background=backdrop,
+            audio=song,
             mods=int(judged.replay.mods),
         )
 

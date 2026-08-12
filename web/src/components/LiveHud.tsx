@@ -127,6 +127,12 @@ export function LiveHud({ header, clock, t }: LiveHudProps) {
     <>
       <div
         className="pointer-events-none absolute left-md top-md rounded-sm bg-canvas/60 px-md py-xs font-mono text-body-sm tabular-nums"
+        // A generic element is not reliably given its `aria-label` by assistive
+        // technology, so the readout beside the field was labelled and then not
+        // announced. `group` rather than `status`: these numbers change on every
+        // frame of playback, and a live region would read them aloud
+        // continuously to someone who came here to watch a replay.
+        role="group"
         aria-label={t("player.liveStats")}
       >
         <span className="text-ink">{(accuracy * 100).toFixed(2)}%</span>

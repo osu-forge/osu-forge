@@ -406,6 +406,12 @@ impl Beatmap {
         self.inner.metadata.background.as_deref()
     }
 
+    /// File name of the audio track, relative to the beatmap's folder.
+    #[getter]
+    fn audio(&self) -> Option<&str> {
+        self.inner.metadata.audio.as_deref()
+    }
+
     /// Milliseconds from the first object to the last. Not the audio length.
     #[getter]
     fn length(&self) -> f64 {

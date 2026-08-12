@@ -41,10 +41,12 @@ const en = {
   "player.break": "break",
   "player.loopClear": "Clear the A–B loop",
   "player.revealHidden": "reveal HD",
+  "player.mute": "mute",
   "player.liveStats": "Running totals at the playhead",
   "player.errorBar": "The last dozen hit errors on the judgement-window scale",
+  "player.fieldToggle": "Play or pause the replay",
   "player.shortcuts":
-    "Space play/pause · ←/→ seek 2 s, Shift 10 s · , and . step one sample · [ and ] mark an A–B loop, \\ clears it · Home start",
+    "Click the field or Space play/pause · ←/→ seek 2 s, Shift 10 s · , and . step one sample · [ and ] mark an A–B loop, \\ clears it · Home start",
   "player.samplesOnly": "Recorded samples only",
   "player.samplesOnlyHelp":
     "A replay records about 60 cursor positions a second and nothing between them. Points are what was measured; the faint line only joins them.",
@@ -171,10 +173,12 @@ const ko: Record<Key, string> = {
   "player.break": "브레이크",
   "player.loopClear": "A–B 구간 해제",
   "player.revealHidden": "HD 표시 해제",
+  "player.mute": "음소거",
   "player.liveStats": "재생 지점까지의 누적 수치",
   "player.errorBar": "판정창 눈금 위 최근 12개 히트 오차",
+  "player.fieldToggle": "리플레이 재생·일시정지",
   "player.shortcuts":
-    "Space 재생/정지 · ←/→ 2초 이동, Shift 10초 · , 와 . 표본 단위 이동 · [ 와 ] 로 A–B 구간 반복, \\ 로 해제 · Home 처음으로",
+    "필드 클릭 또는 Space 재생/정지 · ←/→ 2초 이동, Shift 10초 · , 와 . 표본 단위 이동 · [ 와 ] 로 A–B 구간 반복, \\ 로 해제 · Home 처음으로",
   "player.samplesOnly": "기록된 표본만",
   "player.samplesOnlyHelp":
     "리플레이는 커서 위치를 초당 약 60번 기록하고 그 사이는 기록하지 않습니다. 점이 실제로 측정된 것이고, 흐린 선은 점을 잇기만 합니다.",

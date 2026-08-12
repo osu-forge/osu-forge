@@ -118,6 +118,12 @@ class Site:
                 # only same-origin script can mint a `blob:`, and `script-src`
                 # allows none this page did not ship with.
                 "img-src 'self' data: blob:",
+                # The same argument for the song, which otherwise falls back to
+                # `default-src 'self'` and is refused as a `blob:` after it has
+                # already been downloaded. Audio failing that way is quieter
+                # than an image failing: the play simply has no sound, and
+                # nothing on the page says why.
+                "media-src 'self' blob:",
                 "font-src 'self'",
                 "connect-src 'self'",
                 "base-uri 'none'",

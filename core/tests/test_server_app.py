@@ -160,6 +160,46 @@ class TestBackground:
         assert self.build(access, payload).get("/api/replays/a.osr/background").status_code == 401
 
 
+class TestAudio:
+    def build(self, access: Access, payload: Any) -> TestClient:
+        app = build_app(access, page=PAGE, payloads={"a.osr": payload})
+        return TestClient(app, base_url=f"http://127.0.0.1:{PORT}")
+
+    def test_a_song_comes_back_with_its_kind(self, access: Access, tmp_path: Any) -> None:
+        # The kind is what decides whether the element will play it, so it is
+        # mapped from the suffix rather than guessed from the bytes.
+        for name, expected in (("a.mp3", "audio/mpeg"), ("a.ogg", "audio/ogg")):
+            song = tmp_path / name
+            song.write_bytes(b"not really encoded")
+            payload = _Payload()
+            payload.audio = song
+            response = self.build(access, payload).get("/api/replays/a.osr/audio", headers=auth())
+            assert response.status_code == 200
+            assert response.headers["content-type"] == expected
+            assert response.content == b"not really encoded"
+
+    def test_a_map_without_one_is_a_404(self, access: Access) -> None:
+        client = self.build(access, _Payload())
+        assert client.get("/api/replays/a.osr/audio", headers=auth()).status_code == 404
+
+    def test_a_file_deleted_since_startup_is_a_404_not_a_crash(
+        self, access: Access, tmp_path: Any
+    ) -> None:
+        payload = _Payload()
+        payload.audio = tmp_path / "gone.mp3"
+        client = self.build(access, payload)
+        assert client.get("/api/replays/a.osr/audio", headers=auth()).status_code == 404
+
+    def test_it_needs_the_token_like_everything_under_api(
+        self, access: Access, tmp_path: Any
+    ) -> None:
+        song = tmp_path / "a.mp3"
+        song.write_bytes(b"mp3")
+        payload = _Payload()
+        payload.audio = song
+        assert self.build(access, payload).get("/api/replays/a.osr/audio").status_code == 401
+
+
 class TestCorpus:
     def build(self, access: Access, corpus: Any) -> TestClient:
         app = build_app(

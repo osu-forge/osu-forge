@@ -128,6 +128,12 @@ class TestPolicy:
         # which reads on the page as a map that has no background.
         assert "img-src 'self' data: blob:" in load_site(build_site(tmp_path / "dist")).policy()
 
+    def test_the_song_can_be_played(self, tmp_path: Path) -> None:
+        # The same shape as the backdrop, and the failure is quieter: with no
+        # media-src the policy falls back to default-src 'self', which admits no
+        # blob:, and a play that downloaded its track sits there in silence.
+        assert "media-src 'self' blob:" in load_site(build_site(tmp_path / "dist")).policy()
+
     def test_nothing_off_this_machine_is_reachable(self, tmp_path: Path) -> None:
         policy = load_site(build_site(tmp_path / "dist")).policy()
         assert "default-src 'self'" in policy
