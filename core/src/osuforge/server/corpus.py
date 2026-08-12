@@ -309,7 +309,12 @@ class CorpusState:
                 )
                 for name, fact in believed.items()
             ),
-            key=lambda entry: entry.played_at,
+            # The same tie-break `progress` and the verification impose, because
+            # this list is what decides which epoch is current and is then handed
+            # to both. `fill_epochs` says it out loud: whoever decides "current"
+            # has to do it from the record the boundary detection uses, or the
+            # two disagree about where the present starts.
+            key=lambda entry: (entry.played_at, entry.replay),
         )
 
         # The verdict is about the settings now in force. Pooling across a

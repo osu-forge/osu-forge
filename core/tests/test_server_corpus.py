@@ -267,6 +267,47 @@ class TestEpochs:
         boundary = answer["progress"]["boundary"]
         assert boundary is not None and boundary["kind"] == "midpoint"
 
+    def test_the_present_and_the_boundary_are_read_off_one_order(self) -> None:
+        # Which epoch is current is decided from the newest entry of this list,
+        # and the same list is handed to `progress` to find the boundary. When
+        # two replays share a timestamp the last one is whichever the sort left
+        # there, so the two have to sort alike or the panel names an era the
+        # boundary below it disagrees with -- which is what `fill_epochs` warns
+        # about in its own docstring.
+        state = CorpusState()
+        feed(state, sessions=3, epoch="aaaa000000000000", mean=8.0)
+        feed(state, sessions=3, first_session=3, epoch="bbbb111111111111", mean=1.0, seed=9)
+        # Two more plays on one stamp, newer than everything above, recorded
+        # under the two eras in the order that puts the older one last.
+        late = (("zzz-late.osr", "bbbb111111111111"), ("aaa-late.osr", "aaaa000000000000"))
+        for name, epoch in late:
+            state.add(
+                name,
+                beatmap_hash="map-a",
+                beatmap="Artist - Title [map-a]",
+                played_at=START + timedelta(days=99),
+                errors=[1.0] * 120,
+                miss_rate=0.02,
+                accuracy=0.97,
+                breaks=1,
+                agreement=Agreement.EXACT,
+                agreement_reason="all judgements reproduce",
+                fractional_windows=False,
+                arrival=None,
+                epoch=epoch,
+            )
+
+        answer = state.recompute()
+        excluded = answer["excluded"]
+        boundary = answer["progress"]["boundary"] if answer["progress"] else None
+        assert boundary is not None
+
+        # Whatever the tie resolved to, the two must name the same era: a replay
+        # the panel calls out of epoch cannot also sit on the after side of the
+        # boundary the same answer is showing.
+        current = "bbbb111111111111" if "aaa-late.osr" in excluded else "aaaa000000000000"
+        assert all(f"not the current {current}" in reason for reason in excluded.values())
+
     def test_the_progress_block_is_json_all_the_way_down(self) -> None:
         state = CorpusState()
         feed(state, sessions=4, epoch="aaaa000000000000", mean=8.0)
