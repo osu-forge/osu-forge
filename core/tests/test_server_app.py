@@ -8,17 +8,27 @@ game from a web page they happened to open.
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any
 
 import pytest
 from fastapi.testclient import TestClient
 
 from osuforge.server.app import build_app
+from osuforge.server.assets import load_site
 from osuforge.server.security import Access, SessionToken
+
+BUILT_SITE = Path(__file__).resolve().parents[2] / "web" / "dist"
 
 PORT = 24080
 TOKEN = "test-token-value"
 PAGE = "<!doctype html><title>t</title><script>const T='__TOKEN__';</script>"
+SECOND = "<!doctype html><title>ping</title><script>const P='__TOKEN__';</script>"
+
+# What `load_site` produces for a directory-format build of two pages: the
+# second one keyed by both forms of its URL, because a browser following a link
+# written `/ping` may ask for either.
+PAGES = {"/": PAGE, "/ping/": SECOND, "/ping": SECOND}
 
 
 class _Payload:
@@ -34,7 +44,7 @@ def access() -> Access:
 
 @pytest.fixture
 def client(access: Access) -> TestClient:
-    app = build_app(access, page=PAGE, payloads={"a.osr": _Payload()})  # type: ignore[dict-item]
+    app = build_app(access, pages=PAGES, payloads={"a.osr": _Payload()})  # type: ignore[dict-item]
     return TestClient(app, base_url=f"http://127.0.0.1:{PORT}")
 
 
@@ -101,6 +111,136 @@ class TestToken:
         assert "__TOKEN__" not in client.get("/").text
 
 
+class TestPages:
+    """More than one page, each substituted and each reachable by navigation."""
+
+    def test_a_second_page_is_served_with_its_token_and_no_header(self, client: TestClient) -> None:
+        # No Authorization, because a browser navigating to a URL cannot attach
+        # one — the same reason `/` is reachable without it.
+        response = client.get("/ping/")
+        assert response.status_code == 200
+        assert response.headers["content-type"].startswith("text/html")
+        assert TOKEN in response.text
+        assert "__TOKEN__" not in response.text, (
+            "an unsubstituted page 401s on every call it makes, and says nothing about why"
+        )
+
+    def test_the_second_page_is_reached_by_either_form_of_its_url(self, client: TestClient) -> None:
+        assert client.get("/ping").text == client.get("/ping/").text
+
+    def test_the_pages_are_told_apart(self, client: TestClient) -> None:
+        # Both hold the placeholder, so a lookup that fell back to the root page
+        # would still substitute and still look right.
+        assert "<title>ping</title>" in client.get("/ping/").text
+        assert "<title>t</title>" in client.get("/").text
+
+    def test_the_api_still_refuses_without_a_token(self, client: TestClient) -> None:
+        # The point of the exemption being membership of the page table: adding
+        # pages does not move the data behind it.
+        assert client.get("/api/replays").status_code == 401
+        assert client.get("/api/replays/a.osr/frames").status_code == 401
+
+    def test_a_path_that_reads_two_ways_is_decided_by_the_one_that_routes(
+        self, client: TestClient
+    ) -> None:
+        # `request.url.path` is rebuilt from the scope and re-split, so an
+        # encoded `?` decodes into a delimiter and everything after it is
+        # dropped: this path reads as `/` there and as itself to the router.
+        # Whichever handler ends up running, the exemption has to have been
+        # decided about the same string, or a request reaches one on the
+        # strength of another's exemption.
+        response = client.get("/%3F../api/replays")
+        assert response.status_code == 401, (
+            "the request was waved through on the root page's exemption"
+        )
+
+    def test_a_page_under_a_differently_cased_api_is_refused_too(self, access: Access) -> None:
+        # The router matches case-sensitively, so `/API/x` would never reach the
+        # `/api/x` handler and this is not reachable today. It is refused anyway:
+        # this check is what decides who is served without a token, and resting
+        # that on a second component's case sensitivity is a coupling nobody
+        # would write down on purpose.
+        with pytest.raises(ValueError, match="without a token"):
+            build_app(access, pages={"/": PAGE, "/API/sneak/": PAGE}, payloads={})
+
+    def test_an_unknown_path_is_a_404_for_a_request_that_has_the_token(
+        self, client: TestClient
+    ) -> None:
+        assert client.get("/ping/nested", headers=auth()).status_code == 404
+
+    def test_a_page_inside_the_api_namespace_is_refused_before_the_socket_opens(
+        self, access: Access
+    ) -> None:
+        # It cannot come out of an Astro build, and if it ever did it would be an
+        # exemption granted inside the data surface. Refused at construction,
+        # where it is one check, rather than per request, where it is a filter
+        # that has to be right about every path a browser can encode.
+        for table in ({"/": PAGE, "/api/replays": PAGE}, {"/": PAGE, "/ws": PAGE}):
+            with pytest.raises(ValueError, match="without a token"):
+                build_app(access, pages=table, payloads={})
+
+    def test_an_asset_inside_the_api_namespace_is_refused_too(self, access: Access) -> None:
+        with pytest.raises(ValueError, match="without a token"):
+            build_app(
+                access,
+                pages={"/": PAGE},
+                payloads={},
+                assets={"/api/replays": (b"{}", "application/json")},
+            )
+
+
+@pytest.mark.skipif(
+    not (BUILT_SITE / "index.html").is_file(),
+    reason=f"no built site at {BUILT_SITE}; run `npm run build` in web/",
+)
+class TestTheRealBuild:
+    """The whole chain on real output: Astro's config, the loader, the server.
+
+    The fixtures above assert what the server does with a page table; this
+    asserts that the table a real build produces is the one it does that to. The
+    two can only drift apart here, where nothing is written by hand.
+    """
+
+    def client(self, access: Access) -> TestClient:
+        site = load_site(BUILT_SITE)
+        app = build_app(
+            access,
+            pages=site.pages,
+            payloads={},
+            assets=site.assets,
+            policy=site.policy,
+        )
+        return TestClient(app, base_url=f"http://127.0.0.1:{PORT}")
+
+    def test_the_second_page_arrives_substituted_and_unauthenticated(self, access: Access) -> None:
+        # No Authorization header, because a browser navigating to a URL has no
+        # way to attach one. Before this change the same file was served out of
+        # the asset table as bytes, placeholder intact, and every call the page
+        # then made was answered 401 with nothing saying why.
+        response = self.client(access).get("/ping/")
+        assert response.status_code == 200
+        assert TOKEN in response.text
+        assert "__TOKEN__" not in response.text
+
+    def test_either_form_of_its_url_reaches_it(self, access: Access) -> None:
+        client = self.client(access)
+        assert client.get("/ping").text == client.get("/ping/").text
+
+    def test_the_api_still_refuses_a_request_with_no_token(self, access: Access) -> None:
+        assert self.client(access).get("/api/replays").status_code == 401
+
+    def test_a_page_is_sent_only_the_hashes_of_its_own_scripts(self, access: Access) -> None:
+        # The built root page carries Astro's hydration script and the built
+        # second page carries none, so a union policy would hand `/ping/`
+        # permission to run a script it never shipped.
+        client = self.client(access)
+        root = client.get("/").headers["content-security-policy"]
+        second = client.get("/ping/").headers["content-security-policy"]
+        assert "'sha256-" in root
+        assert "'sha256-" not in second
+        assert "'unsafe-inline'" not in root.split("style-src")[0]
+
+
 class TestData:
     def test_a_header_comes_back_as_json(self, client: TestClient) -> None:
         response = client.get("/api/replays/a.osr/header", headers=auth())
@@ -125,7 +265,7 @@ class TestData:
 
 class TestBackground:
     def build(self, access: Access, payload: Any) -> TestClient:
-        app = build_app(access, page=PAGE, payloads={"a.osr": payload})
+        app = build_app(access, pages=PAGES, payloads={"a.osr": payload})
         return TestClient(app, base_url=f"http://127.0.0.1:{PORT}")
 
     def test_a_background_comes_back_with_its_kind(self, access: Access, tmp_path: Any) -> None:
@@ -162,7 +302,7 @@ class TestBackground:
 
 class TestAudio:
     def build(self, access: Access, payload: Any) -> TestClient:
-        app = build_app(access, page=PAGE, payloads={"a.osr": payload})
+        app = build_app(access, pages=PAGES, payloads={"a.osr": payload})
         return TestClient(app, base_url=f"http://127.0.0.1:{PORT}")
 
     def test_a_song_comes_back_with_its_kind(self, access: Access, tmp_path: Any) -> None:
@@ -204,7 +344,7 @@ class TestCorpus:
     def build(self, access: Access, corpus: Any) -> TestClient:
         app = build_app(
             access,
-            page=PAGE,
+            pages=PAGES,
             payloads={"a.osr": _Payload()},
             corpus=corpus,  # type: ignore[dict-item]
         )
@@ -309,3 +449,18 @@ class TestHeaders:
         # and another thing to keep correct.
         for path in ("/docs", "/redoc", "/openapi.json"):
             assert client.get(path, headers=auth()).status_code == 404
+
+    def test_the_policy_is_asked_for_the_path_it_is_sent_with(self, access: Access) -> None:
+        # Per page, and this is the wiring that makes it so: each page ships its
+        # own inline script, and one policy naming every page's hashes would
+        # admit each of those scripts on all the other pages.
+        app = build_app(
+            access,
+            pages=PAGES,
+            payloads={},
+            policy=lambda path: f"script-src 'self' 'hash-of{path}'",
+        )
+        client = TestClient(app, base_url=f"http://127.0.0.1:{PORT}")
+        for path in ("/", "/ping/", "/ping"):
+            header = client.get(path).headers["content-security-policy"]
+            assert header == f"script-src 'self' 'hash-of{path}'"

@@ -1,0 +1,24 @@
+---
+import Base from "@/layouts/Base.astro";
+
+/**
+ * A second page, and nothing else.
+ *
+ * It exists so that "the server can serve more than one page" is something a
+ * test can check against a real build rather than against a hand-written
+ * fixture: the shape of the built output is decided by Astro's config, and a
+ * fixture cannot notice that shape changing. `core/tests/test_server_assets.py`
+ * asserts this file arrives at `/ping/` with its token substituted.
+ *
+ * Deliberately not worth keeping. The multipage dashboard replaces it with real
+ * pages; until then it is the cheapest thing that proves the mechanism.
+ */
+const token = "__TOKEN__";
+---
+
+<Base title="osu-forge - ping">
+  <main class="p-8 font-mono text-sm">
+    <p>This page is served by osu-forge, and it received a session token.</p>
+    <p>token: <code>{token}</code></p>
+  </main>
+</Base>

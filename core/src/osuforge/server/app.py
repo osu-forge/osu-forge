@@ -5,13 +5,20 @@ reaches anything that reads a file, and the order matters: `Host` first, because
 it is the layer that stops DNS rebinding and a rebound request must not get as
 far as being told whether its token is valid.
 
-# Why the page itself needs no token
+# Why the pages themselves need no token
 
-A browser navigating to a URL cannot send an `Authorization` header, so `GET /`
-has to be reachable without one. That is safe and it is not a compromise: a
-cross-site page can cause a navigation, but it cannot read the response — the
-same-origin policy stops that — so it cannot get the token out of the HTML. The
-page reads its own token and uses it for everything after.
+A browser navigating to a URL cannot send an `Authorization` header, so every
+URL a person can type or click has to be reachable without one. That is safe and
+it is not a compromise: a cross-site page can cause a navigation, but it cannot
+read the response — the same-origin policy stops that — so it cannot get the
+token out of the HTML. The page reads its own token and uses it for everything
+after.
+
+The set of URLs that are exempt is exactly the two tables handed in, both built
+before the socket opened, and both refused at construction if anything in them
+reaches into `/api` or `/ws`. So the exemption cannot grow to cover data by
+someone adding a page, and there is no pattern to be matched per request and got
+subtly wrong.
 """
 
 from __future__ import annotations
@@ -28,6 +35,10 @@ from osuforge.server.security import Access
 __all__ = ["build_app"]
 
 _TOKEN_PREFIX = "Bearer "
+_TOKEN_PLACEHOLDER = "__TOKEN__"
+_RESERVED = ("/api", "/ws")
+"""The namespaces nothing may be served from without a token."""
+
 _TOKEN_SUBPROTOCOL = "osu-forge-token."
 """How a WebSocket carries the token.
 
@@ -45,6 +56,17 @@ def _token_from(request: Request) -> str | None:
     return None
 
 
+def _reserved(url: str) -> bool:
+    # Case-folded, though the router matches case-sensitively and `/API/x` would
+    # therefore never reach the `/api/x` handler. This is the check that decides
+    # what is handed out without a token, and it is asked about a URL that came
+    # from a file name on a case-preserving filesystem — so it answers about the
+    # namespace rather than about one spelling of it, and is not left resting on
+    # a second component agreeing with it.
+    folded = url.casefold()
+    return any(folded == prefix or folded.startswith(f"{prefix}/") for prefix in _RESERVED)
+
+
 def _token_from_subprotocols(raw: str | None) -> str | None:
     for entry in (raw or "").split(","):
         candidate = entry.strip()
@@ -56,21 +78,29 @@ def _token_from_subprotocols(raw: str | None) -> str | None:
 def build_app(
     access: Access,
     *,
-    page: str,
+    pages: dict[str, str],
     payloads: dict[str, Any],
     assets: dict[str, tuple[bytes, str]] | None = None,
     broadcaster: Broadcaster | None = None,
-    policy: str | None = None,
+    policy: Callable[[str], str] | None = None,
     corpus: Callable[[], dict[str, Any] | None] | None = None,
 ) -> FastAPI:
     """Assemble the server.
 
-    `payloads` maps a replay name to a `ReplayPayload`, and `assets` maps a URL
-    path to `(bytes, content type)`. Both are passed in rather than discovered
+    `pages` maps a URL path to HTML still holding the token placeholder, which
+    is substituted into each response rather than once here, so the only copy of
+    the token in this process is the one on its way out. `payloads` maps a
+    replay name to a `ReplayPayload`, and `assets` maps a URL path to
+    `(bytes, content type)`. All three are passed in rather than discovered
     here, because a server that goes looking at the filesystem on request is a
     server whose reach is decided by whatever asks it — and with the built site
     already in memory, path traversal has no mechanism to exist rather than
     being something a filter has to catch.
+
+    `policy` is asked for the Content-Security-Policy of a path, per page rather
+    than once for the site: each page ships its own inline script, and one
+    policy naming every page's hashes would admit each of those scripts on all
+    the other pages.
 
     `broadcaster` is where connected sockets are registered so a watcher can
     push a new play to them. Optional: without one the socket still answers
@@ -80,10 +110,26 @@ def build_app(
     there is none yet. A callable rather than a dictionary because the answer
     changes while the server runs, and a callable that only reads is what keeps
     the seconds of statistics behind it off the request path.
+
+    Raises `ValueError` when a page or an asset claims a URL under `/api` or
+    `/ws`. Nothing an Astro build emits lands there, and an exemption handed out
+    inside the data surface is the one mistake this module has no second line of
+    defence against, so it is refused rather than assumed impossible.
     """
     app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
     static = assets or {}
     listeners = broadcaster or Broadcaster()
+
+    # Everything in these two tables is served without a token, so this is the
+    # one place the exemption could be widened by accident. Refused here, before
+    # the socket opens, rather than by a per-request filter that would have to
+    # keep being right for every path shape a browser can encode.
+    trespassing = sorted(url for url in (*pages, *static) if _reserved(url))
+    if trespassing:
+        raise ValueError(
+            "these are served without a token, so none may be under "
+            f"{' or '.join(_RESERVED)}: {', '.join(trespassing)}"
+        )
 
     @app.middleware("http")
     async def guard(
@@ -96,12 +142,22 @@ def build_app(
         if not access.origin_allowed(request.headers.get("origin")):
             return JSONResponse({"error": "bad origin"}, status_code=403)
 
-        # The page and the assets it needs are reachable without a token, for
+        # The pages and the assets they need are reachable without a token, for
         # the same reason: a browser fetching a stylesheet named by the HTML it
-        # just loaded cannot attach a header either. Nothing under /api or /ws
-        # is exempt, and those are where the data is.
-        path = request.url.path
-        exempt = path == "/" or path in static
+        # just loaded cannot attach a header either. Membership of the two
+        # tables, not a prefix or a suffix — and both were checked above for
+        # staying out of /api and /ws, which is where the data is.
+        #
+        # Read off the scope rather than `request.url.path`, which is the same
+        # value only most of the time: the URL is rebuilt as a string from the
+        # scope and split again, so a percent-encoded `?` or `#` in the path
+        # decodes into a delimiter and everything after it is dropped. That
+        # makes `/%3F../api/replays` read as `/` here — exempt — while the
+        # router still matches the whole thing. Two answers to "which path is
+        # this" is one more than a decision about who may see the data can
+        # stand, and the router's is the one that decides what runs.
+        path = request.scope["path"]
+        exempt = path in pages or path in static
         if not exempt and not access.token.matches(_token_from(request)):
             return JSONResponse({"error": "unauthorised"}, status_code=401)
 
@@ -111,17 +167,16 @@ def build_app(
         # response — which is the thing being prevented.
         response.headers["X-Content-Type-Options"] = "nosniff"
         response.headers["Cache-Control"] = "no-store"
-        if policy:
+        if policy is not None:
             # As a header, not a meta element. `frame-ancestors` is ignored in
             # a meta and it is the directive that stops this page being framed,
             # so the meta form quietly protects less than it appears to.
-            response.headers["Content-Security-Policy"] = policy
+            #
+            # Asked for the requested path, so a page is sent the hashes of the
+            # scripts it shipped with and nothing else is sent any.
+            response.headers["Content-Security-Policy"] = policy(path)
         response.headers["Referrer-Policy"] = "no-referrer"
         return response
-
-    @app.get("/", response_class=HTMLResponse)
-    async def index() -> HTMLResponse:
-        return HTMLResponse(page.replace("__TOKEN__", access.token.value))
 
     @app.get("/api/replays")
     async def replays() -> dict[str, Any]:
@@ -259,13 +314,19 @@ def build_app(
             listeners.discard(websocket)
 
     # Registered last, deliberately: a catch-all declared earlier would shadow
-    # every named route above it. The lookup is a dict built before the socket
+    # every named route above it. Both lookups are dicts built before the socket
     # opened, so a request for `../../secrets` finds no key — path traversal has
     # no mechanism here rather than being caught by a filter that has to be
-    # right every time.
+    # right every time. One route for pages and assets both, because the table a
+    # URL is found in is what decides how it is served, and two routes would be
+    # two chances for a page to be answered as bytes.
     @app.get("/{path:path}", include_in_schema=False)
-    async def asset(path: str) -> Response:
-        found = static.get("/" + path)
+    async def served(path: str) -> Response:
+        url = "/" + path
+        html = pages.get(url)
+        if html is not None:
+            return HTMLResponse(html.replace(_TOKEN_PLACEHOLDER, access.token.value))
+        found = static.get(url)
         if found is None:
             raise HTTPException(status_code=404, detail="not found")
         body, content_type = found

@@ -667,9 +667,13 @@ def _serve(args: argparse.Namespace) -> int:
         print(f"error: {exc}", file=sys.stderr)
         return 2
     if not site.carries_token_placeholder:
-        # The page would then fetch without a token and fail on every request,
-        # which reads as a server fault rather than a build fault.
-        print("error: the built page has no token placeholder; rebuild web/", file=sys.stderr)
+        # Such a page fetches without a token and is answered 401 on every
+        # request, which reads as a server fault rather than a build fault.
+        # Named, because with more than one page the one at fault is not the
+        # one whoever reads this was thinking about.
+        missing = site.pages_without_token
+        where = ", ".join(missing) if missing else "the site has no pages"
+        print(f"error: no token placeholder in {where}; rebuild web/", file=sys.stderr)
         return 2
 
     install = config_path.parent

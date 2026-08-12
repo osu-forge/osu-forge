@@ -330,6 +330,37 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   rather than implying all of them.
 
 ### Changed
+- The server serves pages, plural. `Site` held one `index` string and
+  `load_site` read one `index.html`; every other file in the build went into the
+  asset table, so a second page would have been served from there as the bytes on
+  disk with `__TOKEN__` still in it. That page loads, looks finished, and is
+  answered 401 on every call it makes, with nothing on either side saying why —
+  the substitution is what the placeholder is for and the asset table has no
+  reason to know about it. Pages are keyed now by the URL a browser asks for,
+  which for a directory-format build is both `/ping/` and `/ping`, since a link
+  written one way is followed the other by some browsers and a redirect to
+  correct a slash is a round trip that buys nothing. Every `.html` is routed into
+  that table and out of the assets one on its extension rather than by name,
+  because a list of known page names is a thing the next page can be missing
+  from. The token exemption is membership of that table, and a page or asset
+  claiming a URL under `/api` or `/ws` is refused when the app is assembled
+  rather than filtered per request, so a page cannot be added that moves data out
+  from behind the token. `web/astro.config.mjs` states `build.format` and
+  `trailingSlash` instead of inheriting them: the file shape the build emits and
+  the URL shape the server keys on are two halves of one decision, and a default
+  changing under either side would move every page's URL with nothing in the
+  repository saying so. `web/src/pages/ping.astro` is the second page the tests
+  check a real build against, since a hand-written fixture cannot notice that
+  shape moving; it goes when the dashboard has real pages to put there.
+- The Content-Security-Policy is computed per page rather than once for the site.
+  Astro emits its own inline hydration script per page and the policy names the
+  exact hashes, so one policy for a multipage site would have to name the union
+  of them — which is also permission for page A's inline script to run inside
+  page B, where it was never shipped. An injected body that is already allowed is
+  most of what naming hashes was there to prevent, so the union is the one shape
+  the hashes must not take. A path holding no page is sent a policy naming no
+  inline script at all: an asset response and a 404 have no document for one to
+  run in.
 - The playback end-to-end test drives `forge serve` itself, and the test-only
   launcher that used to stand in for it is gone. The launcher existed only
   because the command line could not be imported off Windows; kept past that it
@@ -385,6 +416,19 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   interpreter down with no traceback. The engine still gets the smaller binary.
 
 ### Fixed
+- The check deciding which requests need no token asked a different question
+  than the router did. It read `request.url.path`, which Starlette rebuilds from
+  the scope as a string and splits again — so a percent-encoded `?` or `#` in
+  the path decodes into a delimiter and everything after it is dropped.
+  `/%3F../api/replays` therefore read as `/` to the exemption, which found it in
+  the page table and waved it through, while the router went on matching the
+  whole path. Nothing reachable came of it, because no handler answers that
+  spelling, but a request was being admitted on another URL's exemption. Both
+  read the routed path now, so there is one answer to which path a request is
+  for. The namespace check that refuses a page under `/api` or `/ws` also folds
+  case, which the router does not: it is what decides who is served without a
+  token, and it should not rest on a second component's case sensitivity to
+  stay true.
 - A beatmap could name a file outside its own folder and have the server read it.
   The background and the audio track are both named by a line in the `.osu`, which
   is a document downloaded from a stranger, and the name was joined to the map's
