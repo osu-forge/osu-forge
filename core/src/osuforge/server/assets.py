@@ -110,7 +110,14 @@ class Site:
                 # to be redone on every rebuild for no gain: a stylesheet
                 # cannot exfiltrate anything with connect-src locked down.
                 "style-src 'self' 'unsafe-inline'",
-                "img-src 'self' data:",
+                # `blob:` because the beatmap background cannot ride on an
+                # `<img src>`: the endpoint wants the session token, so the page
+                # fetches it with the header and wraps the response in an object
+                # URL. Without this the fetch succeeds and the browser then
+                # refuses to paint what it downloaded. It grants nothing extra —
+                # only same-origin script can mint a `blob:`, and `script-src`
+                # allows none this page did not ship with.
+                "img-src 'self' data: blob:",
                 "font-src 'self'",
                 "connect-src 'self'",
                 "base-uri 'none'",

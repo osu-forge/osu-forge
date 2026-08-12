@@ -121,6 +121,13 @@ class TestPolicy:
         # a header.
         assert "frame-ancestors 'none'" in load_site(build_site(tmp_path / "dist")).policy()
 
+    def test_the_backdrop_can_be_painted(self, tmp_path: Path) -> None:
+        # The background endpoint is authenticated, so the page fetches it with
+        # the token and hands the result to an <img> as an object URL. A policy
+        # that omits blob: blocks every backdrop after a successful download,
+        # which reads on the page as a map that has no background.
+        assert "img-src 'self' data: blob:" in load_site(build_site(tmp_path / "dist")).policy()
+
     def test_nothing_off_this_machine_is_reachable(self, tmp_path: Path) -> None:
         policy = load_site(build_site(tmp_path / "dist")).policy()
         assert "default-src 'self'" in policy
