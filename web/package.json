@@ -19,7 +19,7 @@
     "@astrojs/react": "^4.2.0",
     "@fontsource/geist-mono": "^5.1.0",
     "@fontsource/inter": "^5.1.0",
-    "astro": "^5.2.0",
+    "astro": "^7.2.1",
     "react": "^19.0.0",
     "react-dom": "^19.0.0"
   },
